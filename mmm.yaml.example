@@ -1,0 +1,51 @@
+# mmm.yaml — marks-markdown-manager configuration
+#
+# See mock-mmm.yaml for a working example with mock data.
+
+# AI command used for dedup checking (e.g., "gemini", "claude")
+ai_command: "gemini"
+ai_command_args: ["-p"]
+
+# Global context: files/dirs to concatenate into a single context file
+context:
+  sources:
+    - ~/my-ai-config/context/
+    - ~/my-ai-config/extra-rules.md
+  exclude: []
+
+# Skills: directories containing SKILL.md files
+skills:
+  sources:
+    - ~/my-ai-config/skills/
+  exclude:
+    - "experimental-skill"
+
+# Subagents: directories containing SKILL.md files for subagents
+subagents:
+  sources:
+    - ~/my-ai-config/subagents/
+  exclude: []
+
+# Target tools and their directory mappings
+# Only include entries for concepts the tool supports
+tools:
+  windsurf:
+    context_dir: "~/.codeium/windsurf/rules/"
+    context_filename: "global-context.md"
+    skills_dir: "~/.codeium/windsurf/skills/"
+    # no subagents_dir — Windsurf doesn't support subagents
+  gemini:
+    context_dir: "~/.gemini/"
+    context_filename: "GEMINI.md"
+    skills_dir: "~/.gemini/skills/"
+    subagents_dir: "~/.gemini/skills/"   # Gemini uses skills dir for both
+  codex:
+    context_dir: "~/.codex/"
+    context_filename: "AGENTS.md"
+    skills_dir: "~/.agents/skills/"      # Codex uses ~/.agents/skills/
+    subagents_dir: "~/.codex/agents/"
+  claude:
+    context_dir: "~/.claude/"
+    context_filename: "CLAUDE.md"
+    skills_dir: "~/.claude/skills/"
+    subagents_dir: "~/.claude/agents/"
