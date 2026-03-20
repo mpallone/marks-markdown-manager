@@ -14,7 +14,7 @@ Before deploying, it can run an AI-powered dedup check that identifies overlappi
 
 ## Getting started
 
-### 1. Install
+### 1. Install (one-time setup)
 
 ```bash
 python3 -m venv venv
@@ -22,6 +22,14 @@ source venv/bin/activate
 pip install --upgrade pip
 pip install -e .
 ```
+
+After this, you only need to activate the venv before running `mmm`:
+
+```bash
+source venv/bin/activate
+```
+
+Re-run `pip install -e .` only if you change `pyproject.toml` (e.g., add a dependency). Code changes in `src/mmm/` are picked up automatically since it's an editable install.
 
 ### 2. Create your source content
 
