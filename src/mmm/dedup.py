@@ -89,8 +89,9 @@ def run_dedup_checks(config: Config, asset_types: Set[str]) -> Set[str]:
 
         print(f"\n--- Dedup check: {asset_type} ---")
 
-        # Write content to a temp directory
-        with tempfile.TemporaryDirectory(prefix=f"mmm-dedup-{asset_type}-") as tmpdir:
+        # Write content to a temp directory inside the current working directory
+        # so the AI tool can access it (some tools restrict access to the project dir)
+        with tempfile.TemporaryDirectory(prefix=f"mmm-dedup-{asset_type}-", dir=".") as tmpdir:
             content_file = Path(tmpdir) / f"{asset_type}-content.md"
             content_file.write_text(content)
 
