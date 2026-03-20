@@ -2,6 +2,10 @@
 
 A CLI tool for distributing AI tool configuration across multiple AI coding assistants.
 
+## WARNING
+
+**I have not yet dogfooded and tested this thoroughly enough to have faith that it works well!**
+
 ## Problems it solves
 
 **1. Distribution across tools**
