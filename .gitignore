@@ -1,3 +1,6 @@
+# Claude Code worktrees
+.claude/worktrees/
+
 # mock-target deploy output
 mock-target/*/
 
