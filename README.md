@@ -20,6 +20,29 @@ An engineer may have multiple potential sources for these assets (personal, team
 
 ### 1. Install (one-time setup)
 
+Recommended for daily use:
+
+```bash
+uv tool install --editable /Users/mpallone/src/mpallone/marks-markdown-manager
+```
+
+This installs `mmm` on your shell `PATH` without requiring you to create or activate a manual virtualenv. `uv` manages the isolated Python environment for you.
+
+`uv tool` installs executables into:
+
+```bash
+/Users/mpallone/.local/bin
+```
+
+Make sure that directory is on your `PATH`, then verify the install:
+
+```bash
+which mmm
+mmm --help
+```
+
+If you prefer direct control of the Python environment while developing on this repo, the old manual option still works:
+
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -27,13 +50,7 @@ pip install --upgrade pip
 pip install -e .
 ```
 
-After this, you only need to activate the venv before running `mmm`:
-
-```bash
-source venv/bin/activate
-```
-
-Re-run `pip install -e .` only if you change `pyproject.toml` (e.g., add a dependency). Code changes in `src/mmm/` are picked up automatically since it's an editable install.
+Re-run `uv tool install --editable ...` or `pip install -e .` only if you change package metadata such as `pyproject.toml`. Code changes in `src/mmm/` are picked up automatically because the install is editable.
 
 ### 2. Create your source content
 
@@ -66,25 +83,33 @@ Edit `~/mmm.yaml` to:
 ### 4. Deploy
 
 ```bash
-source venv/bin/activate
-
 # Preview what would happen without writing anything
-mmm deploy --config ~/mmm.yaml --dry-run --skip-dedup
+mmm deploy --config /path/to/dir/mmm.yaml --dry-run --skip-dedup
 
 # Deploy for real with AI dedup check
-mmm deploy --config ~/mmm.yaml
+mmm deploy --config /path/to/dir/mmm.yaml
 
 # Deploy without dedup check
-mmm deploy --config ~/mmm.yaml --skip-dedup
+mmm deploy --config /path/to/dir/mmm.yaml --skip-dedup
 
 # Deploy only skills to a specific tool
-mmm deploy --config ~/mmm.yaml --type skills --tools claude
+mmm deploy --config /path/to/dir/mmm.yaml --type skills --tools claude
 
 # Check what's currently deployed
-mmm status --config ~/mmm.yaml
+mmm status --config /path/to/dir/mmm.yaml
+```
+
+If you are already in the directory that contains the config file, a relative path is fine:
+
+```bash
+cd /path/to/dir/
+mmm deploy --config mmm.yaml
+mmm status --config mmm.yaml
 ```
 
 The tool checks that each tool's base directory (e.g., `~/.gemini/`, `~/.codex/`, `~/.claude/`, `~/.codeium/windsurf/`) exists before copying. Tools not installed on your machine are skipped automatically.
+
+`--config` is required for `deploy`, `check`, and `status`. Relative config paths resolve from your current working directory. The CLI does not auto-discover `mmm.yaml`.
 
 ### 5. Update after changes
 
@@ -101,7 +126,7 @@ Edit your source files, then re-run `mmm deploy`. It will ask before overwriting
 ## Testing with mock data
 
 ```bash
-pip install -e .
+uv tool install --editable /Users/mpallone/src/mpallone/marks-markdown-manager
 mmm deploy --config mock-mmm.yaml --skip-dedup    # deploy mock data
 mmm status --config mock-mmm.yaml                  # see what's deployed
 mmm deploy --config mock-mmm.yaml --dry-run        # preview without writing
