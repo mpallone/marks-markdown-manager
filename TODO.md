@@ -10,4 +10,5 @@
 - [ ] Add `status` capability — diff current canonical source of truth against what's deployed and explain the differences (i.e. what has drifted since last deploy)
 - [ ] Detect if there are no differences between source and target — make that clear to the user and skip copying
 - [ ] Skip deployment to a tool if that tool isn't installed
+- [ ] Support disabling a tool in the config — skip deployment to that tool without removing it from the config
 - [ ] Support glob patterns in config — e.g. `my-skills/*` means copy all skills in that directory to targets
