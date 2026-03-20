@@ -1,0 +1,43 @@
+# Mock config for testing mmm
+# Points sources at mock/ data and targets at mock-target/ directories
+
+ai_command: "echo"
+ai_command_args: ["Dedup check placeholder — replace ai_command with a real AI tool"]
+ai_skills_dir: "./mock-target/gemini/skills/"  # where to copy dedup-checker skill for the ai_command tool
+
+context:
+  sources:
+    - ./mock/context/
+  exclude: []
+
+skills:
+  sources:
+    - ./mock/skills/
+  exclude: []
+
+subagents:
+  sources:
+    - ./mock/subagents/
+  exclude: []
+
+tools:
+  windsurf:
+    context_dir: "./mock-target/windsurf/rules/"
+    context_filename: "global-context.md"
+    skills_dir: "./mock-target/windsurf/skills/"
+    # no subagents_dir — Windsurf doesn't support subagents
+  gemini:
+    context_dir: "./mock-target/gemini/"
+    context_filename: "GEMINI.md"
+    skills_dir: "./mock-target/gemini/skills/"
+    subagents_dir: "./mock-target/gemini/skills/"
+  codex:
+    context_dir: "./mock-target/codex/"
+    context_filename: "AGENTS.md"
+    skills_dir: "./mock-target/codex/skills/"
+    subagents_dir: "./mock-target/codex/agents/"
+  claude:
+    context_dir: "./mock-target/claude/"
+    context_filename: "CLAUDE.md"
+    skills_dir: "./mock-target/claude/skills/"
+    subagents_dir: "./mock-target/claude/agents/"
