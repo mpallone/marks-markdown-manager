@@ -23,22 +23,27 @@ def gather_context_files(sources: AssetSources) -> List[Path]:
 
 
 def gather_asset_dirs(sources: AssetSources) -> List[Path]:
-    """Find subdirectories containing SKILL.md, applying excludes."""
+    """Find subdirectories containing at least one .md file, applying excludes."""
     dirs = []
     for src in sources.sources:
         if not src.is_dir():
             continue
-        # Check if src itself is a skill dir
-        if (src / "SKILL.md").exists():
+        # Check if src itself contains .md files
+        if _has_md_files(src):
             if not _is_excluded(src.name, sources.exclude):
                 dirs.append(src)
             continue
         # Otherwise scan immediate subdirs
         for child in sorted(src.iterdir()):
-            if child.is_dir() and (child / "SKILL.md").exists():
+            if child.is_dir() and _has_md_files(child):
                 if not _is_excluded(child.name, sources.exclude):
                     dirs.append(child)
     return dirs
+
+
+def _has_md_files(directory: Path) -> bool:
+    """Check if a directory contains at least one .md file."""
+    return any(f.is_file() and f.suffix == ".md" for f in directory.iterdir())
 
 
 def _is_excluded(name: str, excludes: List[str]) -> bool:

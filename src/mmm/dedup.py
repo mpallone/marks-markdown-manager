@@ -53,15 +53,11 @@ def _gather_content(config: Config, asset_type: str) -> str | None:
         dirs = gather_asset_dirs(sources)
         if not dirs:
             return None
-        # Concatenate all SKILL.md files with path headers
+        # Concatenate all .md files with path headers
         all_files: List[Path] = []
         for d in dirs:
-            skill_md = d / "SKILL.md"
-            if skill_md.exists():
-                all_files.append(skill_md)
-            # Also include any other .md files in the skill dir
             for md in sorted(d.rglob("*.md")):
-                if md != skill_md and md.is_file():
+                if md.is_file():
                     all_files.append(md)
         if not all_files:
             return None
