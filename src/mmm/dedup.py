@@ -15,26 +15,18 @@ from mmm.deployer import concatenate_files, gather_asset_dirs, gather_context_fi
 _DEDUP_SKILL_DIR = Path(__file__).resolve().parent.parent.parent / "skills" / "dedup-checker"
 
 
-def _find_skills_dir_for_dedup(config: Config) -> Path | None:
-    """Find the first available skills dir to copy the dedup-checker skill into."""
-    for tool_config in config.tools.values():
-        if tool_config.skills_dir and tool_config.skills_dir.parent.exists():
-            return tool_config.skills_dir
-    return None
-
-
 def _copy_dedup_skill(config: Config) -> bool:
-    """Copy the dedup-checker skill to a tool's skills dir. Returns True if copied."""
+    """Copy the dedup-checker skill to the AI tool's skills dir. Returns True if copied."""
     if not _DEDUP_SKILL_DIR.exists():
         print("Warning: dedup-checker skill not found in repo, skipping skill copy", file=sys.stderr)
         return False
 
-    skills_dir = _find_skills_dir_for_dedup(config)
-    if not skills_dir:
-        print("No tool skills directory available for dedup-checker skill, running without it")
+    if not config.ai_skills_dir:
+        print("Warning: ai_skills_dir not configured, skipping dedup-checker skill copy", file=sys.stderr)
+        print("Set ai_skills_dir in your config to the skills directory for your ai_command tool", file=sys.stderr)
         return False
 
-    dest = skills_dir / "dedup-checker"
+    dest = config.ai_skills_dir / "dedup-checker"
     if dest.exists():
         return True  # Already there
 
@@ -44,7 +36,7 @@ def _copy_dedup_skill(config: Config) -> bool:
         return False
 
     print(f"Copying dedup-checker skill -> {dest}")
-    skills_dir.mkdir(parents=True, exist_ok=True)
+    config.ai_skills_dir.mkdir(parents=True, exist_ok=True)
     shutil.copytree(_DEDUP_SKILL_DIR, dest)
     return True
 

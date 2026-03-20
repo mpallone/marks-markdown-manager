@@ -5,6 +5,8 @@
 # AI command used for dedup checking (e.g., "gemini", "claude")
 ai_command: "gemini"
 ai_command_args: ["-p"]
+# Skills directory for the AI tool above, so it can find the dedup-checker skill
+ai_skills_dir: "~/.gemini/skills/"
 
 # Global context: files/dirs to concatenate into a single context file
 context:
