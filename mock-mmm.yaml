@@ -1,10 +1,6 @@
 # Mock config for testing mmm
 # Points sources at mock/ data and targets at mock-target/ directories
 
-ai_command: "echo"
-ai_command_args: ["Dedup check placeholder — replace ai_command with a real AI tool"]
-ai_skills_dir: "./mock-target/gemini/skills/"  # where to copy dedup-checker skill for the ai_command tool
-
 context:
   sources:
     - ./mock/context/
