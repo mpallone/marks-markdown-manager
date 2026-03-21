@@ -59,6 +59,11 @@ def concatenate_files(files: List[Path]) -> str:
     return "\n".join(parts)
 
 
+def _is_tool_installed(tool_name: str) -> bool:
+    """Check if the tool's CLI command is available in PATH."""
+    return shutil.which(tool_name) is not None
+
+
 def _check_tool_base_dir(tool_name: str, tool_config: ToolConfig) -> bool:
     """Check if the tool's base directory exists on the system."""
     # Determine the base dir from whichever target dir is configured
@@ -80,6 +85,10 @@ def deploy(
     """Deploy approved asset types to all enabled tools."""
     for tool_name, tool_config in config.tools.items():
         if tools_filter and tool_name not in tools_filter:
+            continue
+
+        if not _is_tool_installed(tool_name):
+            print(f"[{tool_name}] Skipping — {tool_name} is not installed (not found in PATH)")
             continue
 
         if not _check_tool_base_dir(tool_name, tool_config):
