@@ -6,17 +6,15 @@ A Python 3 CLI tool that distributes AI tool configuration (global context, skil
 
 ```
 src/mmm/
-├── cli.py        — argparse entry point with deploy/check/status subcommands
+├── cli.py        — argparse entry point with deploy/status subcommands
 ├── config.py     — YAML config loading into dataclasses (Config, AssetSources, ToolConfig)
-├── deployer.py   — file gathering, concatenation, and copying to tool directories
-└── dedup.py      — AI dedup skill invocation via subprocess
+└── deployer.py   — file gathering, concatenation, and copying to tool directories
 ```
 
 ## How deployment works
 
 1. Load config, gather source files for each asset type
-2. **Dedup phase** (unless `--skip-dedup`): copy dedup-checker skill to AI tool's skills dir (with user confirmation), write sources to temp dir, invoke AI command, ask user to proceed
-3. **Deploy phase**: for each tool, copy files to target directories (with user confirmation before overwriting)
+2. **Deploy phase**: for each tool, copy files to target directories (with user confirmation before overwriting)
 
 ## Target tool directories
 

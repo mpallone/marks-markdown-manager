@@ -24,9 +24,6 @@ class ToolConfig:
 
 @dataclass
 class Config:
-    ai_command: str = ""
-    ai_command_args: List[str] = field(default_factory=list)
-    ai_skills_dir: Optional[Path] = None  # where to copy the dedup-checker skill so ai_command can find it
     context: AssetSources = field(default_factory=AssetSources)
     skills: AssetSources = field(default_factory=AssetSources)
     subagents: AssetSources = field(default_factory=AssetSources)
@@ -66,10 +63,6 @@ def load_config(path: str) -> Config:
         raw = yaml.safe_load(f)
 
     config = Config()
-    config.ai_command = raw.get("ai_command", "")
-    config.ai_command_args = raw.get("ai_command_args", [])
-    if "ai_skills_dir" in raw:
-        config.ai_skills_dir = _expand(raw["ai_skills_dir"])
 
     if "context" in raw:
         config.context = _parse_asset_sources(raw["context"])

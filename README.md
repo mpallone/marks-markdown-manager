@@ -77,20 +77,16 @@ cp mmm.yaml.example ~/mmm.yaml
 
 Edit `~/mmm.yaml` to:
 - Point `sources` at your actual content directories
-- Set `ai_command` to your preferred AI CLI (e.g., `gemini`, `claude`)
 - Adjust tool target directories if needed (defaults in the example cover standard locations)
 
 ### 4. Deploy
 
 ```bash
 # Preview what would happen without writing anything
-mmm deploy --config /path/to/dir/mmm.yaml --dry-run --skip-dedup
+mmm deploy --config /path/to/dir/mmm.yaml --dry-run
 
-# Deploy for real with AI dedup check
+# Deploy for real
 mmm deploy --config /path/to/dir/mmm.yaml
-
-# Deploy without dedup check
-mmm deploy --config /path/to/dir/mmm.yaml --skip-dedup
 
 # Deploy only skills to a specific tool
 mmm deploy --config /path/to/dir/mmm.yaml --type skills --tools claude
@@ -109,7 +105,7 @@ mmm status --config mmm.yaml
 
 The tool checks that each tool's base directory (e.g., `~/.gemini/`, `~/.codex/`, `~/.claude/`, `~/.codeium/windsurf/`) exists before copying. Tools not installed on your machine are skipped automatically.
 
-`--config` is required for `deploy`, `check`, and `status`. Relative config paths resolve from your current working directory. The CLI does not auto-discover `mmm.yaml`.
+`--config` is required for `deploy` and `status`. Relative config paths resolve from your current working directory. The CLI does not auto-discover `mmm.yaml`.
 
 ### 5. Update after changes
 
@@ -119,7 +115,6 @@ Edit your source files, then re-run `mmm deploy`. It will ask before overwriting
 
 - `mmm.yaml.example` — example config with all options documented
 - `mock-mmm.yaml` — working config with mock data for testing
-- `skills/dedup-checker/SKILL.md` — the agent skill used for dedup checking
 - `mock/` — sample context, skills, and subagents for testing
 - `mock-target/` — empty target directories for test deployments
 
@@ -127,9 +122,9 @@ Edit your source files, then re-run `mmm deploy`. It will ask before overwriting
 
 ```bash
 uv tool install --editable /Users/mpallone/src/mpallone/marks-markdown-manager
-mmm deploy --config mock-mmm.yaml --skip-dedup    # deploy mock data
-mmm status --config mock-mmm.yaml                  # see what's deployed
-mmm deploy --config mock-mmm.yaml --dry-run        # preview without writing
+mmm deploy --config mock-mmm.yaml    # deploy mock data
+mmm status --config mock-mmm.yaml    # see what's deployed
+mmm deploy --config mock-mmm.yaml --dry-run    # preview without writing
 ```
 
 ## Dependencies
