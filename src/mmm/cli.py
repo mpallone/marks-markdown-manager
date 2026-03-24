@@ -4,7 +4,7 @@ import argparse
 import sys
 
 from mmm.config import load_config
-from mmm.deployer import deploy, show_status
+from mmm.deployer import deploy, show_diff, show_status
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,6 +20,12 @@ def build_parser() -> argparse.ArgumentParser:
     dp.add_argument("--dry-run", action="store_true", help="Print what would be copied without writing")
     dp.add_argument("--type", choices=["context", "skills", "subagents"], help="Deploy only this asset type")
     dp.add_argument("--tools", help="Comma-separated list of tools to deploy to (e.g. gemini,claude)")
+
+    # diff
+    df = sub.add_parser("diff", help="Show what would change in target repos before deploying")
+    df.add_argument("--config", required=True, help="Path to mmm.yaml config file")
+    df.add_argument("--type", choices=["context", "skills", "subagents"], help="Diff only this asset type")
+    df.add_argument("--tools", help="Comma-separated list of tools to diff (e.g. gemini,claude)")
 
     # status
     st = sub.add_parser("status", help="Show what is currently deployed at each tool's target directories")
@@ -49,6 +55,12 @@ def main(argv: list[str] | None = None) -> None:
             approved_types = {type_filter}
 
         deploy(config, tools_filter=tools_filter, type_filter=approved_types, dry_run=args.dry_run)
+
+    elif args.command == "diff":
+        approved_types = {"context", "skills", "subagents"}
+        if type_filter:
+            approved_types = {type_filter}
+        show_diff(config, tools_filter=tools_filter, type_filter=approved_types)
 
     elif args.command == "status":
         show_status(config)
