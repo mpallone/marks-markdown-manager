@@ -1,3 +1,18 @@
+"""Command-line interface for mmm.
+
+Provides three subcommands:
+
+- ``deploy``: Copy assets from source directories to each tool's target location.
+- ``diff``: Preview what would change without writing anything.
+- ``status``: Show what is currently deployed at each tool's target directories.
+
+Example invocations::
+
+    mmm deploy --config mmm.yaml --dry-run
+    mmm diff --config mmm.yaml --tools gemini,claude
+    mmm status --config mmm.yaml
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -8,6 +23,18 @@ from mmm.deployer import deploy, show_diff, show_status
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Construct the argparse parser with deploy, diff, and status subcommands.
+
+    Example usages the parser supports::
+
+        mmm deploy --config mmm.yaml
+        mmm deploy --config mmm.yaml --dry-run --type skills --tools gemini,claude
+        mmm diff --config mmm.yaml --type context
+        mmm status --config mmm.yaml
+
+    Returns:
+        A configured ArgumentParser ready to parse sys.argv.
+    """
     parser = argparse.ArgumentParser(
         prog="mmm",
         description="Distribute AI tool configuration across Windsurf, Gemini CLI, Codex CLI, and Claude Code",
@@ -35,6 +62,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    """Entry point: parse CLI args, load config, and dispatch to the appropriate action.
+
+    Supports two filters to narrow what gets deployed or diffed:
+
+    - ``--tools``: Comma-separated tool names, e.g. ``--tools gemini,claude``
+      limits operations to just those tools.
+    - ``--type``: A single asset type (``context``, ``skills``, or ``subagents``)
+      to operate on. Defaults to all three.
+
+    Args:
+        argv: Command-line arguments to parse. Defaults to sys.argv if None.
+            Primarily exists so tests can call ``main(["deploy", "--config", ...])``
+            without monkeypatching sys.argv.
+    """
     parser = build_parser()
     args = parser.parse_args(argv)
 

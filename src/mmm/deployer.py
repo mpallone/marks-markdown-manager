@@ -1,3 +1,22 @@
+"""Core deployment logic: gather source files, diff against targets, and deploy.
+
+Handles three asset types, each with different deployment strategies:
+
+- **context**: All .md files from source directories are concatenated (with
+  ``<!-- Source: path -->`` headers) into a single file per tool.
+  Example: 5 markdown files → one ``~/.gemini/GEMINI.md``.
+
+- **skills**: Each skill is a directory containing .md files. Directories are
+  copied wholesale into the tool's skills location via ``shutil.copytree``.
+  Example: ``~/rules/skills/code-review/`` → ``~/.gemini/skills/code-review/``.
+
+- **subagents**: Same as skills — directory trees copied to the tool's
+  subagents location.
+
+All write operations show a unified diff first and prompt for confirmation
+(unless ``dry_run=True``).
+"""
+
 from __future__ import annotations
 
 import difflib
@@ -10,7 +29,22 @@ from mmm.config import AssetSources, Config, ToolConfig
 
 
 def gather_context_files(sources: AssetSources) -> List[Path]:
-    """Collect .md files from source dirs/files, applying excludes."""
+    """Collect all .md files from source directories and files, applying excludes.
+
+    Walks each source path: if it's a single .md file, includes it directly;
+    if it's a directory, recursively globs for ``*.md`` files. Files whose
+    names match any exclusion pattern are skipped.
+
+    Example: given sources pointing to ``~/rules/context/`` containing
+    ``setup.md`` and ``draft-ideas.md`` with exclude ``["draft-*"]``,
+    returns ``[Path("~/rules/context/setup.md")]``.
+
+    Args:
+        sources: An AssetSources with paths to scan and patterns to exclude.
+
+    Returns:
+        Sorted list of Path objects pointing to .md files.
+    """
     files = []
     for src in sources.sources:
         if src.is_file() and src.suffix == ".md":
@@ -24,7 +58,22 @@ def gather_context_files(sources: AssetSources) -> List[Path]:
 
 
 def gather_asset_dirs(sources: AssetSources) -> List[Path]:
-    """Find subdirectories containing at least one .md file, applying excludes."""
+    """Find directories containing at least one .md file, applying excludes.
+
+    For each source path, checks if the directory itself contains .md files
+    (in which case it's treated as an asset directory). If not, scans its
+    immediate children for subdirectories that do contain .md files.
+
+    Example: given ``~/rules/skills/`` containing subdirs ``code-review/``
+    (has .md files) and ``empty-skill/`` (no .md files), returns
+    ``[Path("~/rules/skills/code-review/")]``.
+
+    Args:
+        sources: An AssetSources with paths to scan and patterns to exclude.
+
+    Returns:
+        List of directory Paths, each containing at least one .md file.
+    """
     dirs = []
     for src in sources.sources:
         if not src.is_dir():
@@ -43,16 +92,48 @@ def gather_asset_dirs(sources: AssetSources) -> List[Path]:
 
 
 def _has_md_files(directory: Path) -> bool:
-    """Check if a directory contains at least one .md file."""
+    """Check if a directory contains at least one .md file (non-recursive).
+
+    Args:
+        directory: Path to the directory to check.
+
+    Returns:
+        True if any immediate child is a .md file.
+    """
     return any(f.is_file() and f.suffix == ".md" for f in directory.iterdir())
 
 
 def _is_excluded(name: str, excludes: List[str]) -> bool:
+    """Check if a filename matches any fnmatch exclusion pattern.
+
+    Example::
+
+        _is_excluded("draft-ideas.md", ["draft-*", "*.tmp"])  # True
+        _is_excluded("setup-guide.md", ["draft-*", "*.tmp"])   # False
+
+    Args:
+        name: The filename (not full path) to check, e.g. "draft-ideas.md".
+        excludes: List of fnmatch glob patterns, e.g. ["draft-*", "*.tmp"].
+
+    Returns:
+        True if the name matches any pattern in the excludes list.
+    """
     return any(fnmatch(name, pat) for pat in excludes)
 
 
 def concatenate_files(files: List[Path]) -> str:
-    """Join files with source path headers."""
+    """Join multiple .md files into a single string, each prefixed with a source header.
+
+    Each file's content is preceded by an HTML comment identifying its origin,
+    e.g. ``<!-- Source: /home/user/rules/context/setup.md -->``. Files are
+    joined with newlines.
+
+    Args:
+        files: List of Path objects to concatenate.
+
+    Returns:
+        A single string with all file contents joined together.
+    """
     parts = []
     for f in files:
         parts.append(f"<!-- Source: {f} -->")
@@ -61,7 +142,16 @@ def concatenate_files(files: List[Path]) -> str:
 
 
 def _format_file_diff(current: str, incoming: str, label: str) -> str:
-    """Return a unified diff string between current and incoming content, or empty if identical."""
+    """Return a unified diff string between current and incoming content.
+
+    Args:
+        current: The existing file content (what's deployed now).
+        incoming: The new content that would replace it.
+        label: File path used in the diff header (e.g. "~/.gemini/GEMINI.md").
+
+    Returns:
+        A unified diff string, or empty string if the contents are identical.
+    """
     if current == incoming:
         return ""
     current_lines = current.splitlines(keepends=True)
@@ -76,7 +166,20 @@ def _format_file_diff(current: str, incoming: str, label: str) -> str:
 
 
 def _diff_tree(src_dir: Path, dest_dir: Path) -> str:
-    """Compare all files in a source tree against a destination tree. Return combined diff."""
+    """Compare all files in a source tree against a destination tree.
+
+    Walks the source directory recursively. For each file, if it exists in
+    the destination, produces a unified diff. If it's new (not in dest),
+    shows all lines as additions.
+
+    Args:
+        src_dir: The source directory (what we want to deploy).
+        dest_dir: The destination directory (what's currently deployed).
+
+    Returns:
+        Combined unified diff string for all changed/new files, or empty
+        string if the trees are identical.
+    """
     parts = []
     # Diff files that exist in source
     for src_file in sorted(src_dir.rglob("*")):
@@ -103,7 +206,19 @@ def _diff_tree(src_dir: Path, dest_dir: Path) -> str:
 
 
 def _check_tool_base_dir(tool_name: str, tool_config: ToolConfig) -> bool:
-    """Check if the tool's base directory exists on the system."""
+    """Check if the tool's base directory exists on this machine.
+
+    Used to skip tools that aren't installed. For example, if Gemini CLI
+    isn't installed, ``~/.gemini/`` won't exist and we skip deploying to it.
+
+    Args:
+        tool_name: Tool name for logging (currently unused but available).
+        tool_config: The tool's config — checks if any configured target
+            directory (or its parent) exists.
+
+    Returns:
+        True if at least one target directory or its parent exists on disk.
+    """
     # Determine the base dir from whichever target dir is configured
     for d in [tool_config.context_dir, tool_config.skills_dir, tool_config.subagents_dir]:
         if d is not None:
@@ -120,7 +235,19 @@ def deploy(
     type_filter: Set[str],
     dry_run: bool,
 ) -> None:
-    """Deploy approved asset types to all enabled tools."""
+    """Deploy approved asset types to all enabled tools.
+
+    Iterates over each tool in the config, skipping tools not on this machine
+    or not in the tools_filter. For each tool, deploys context, skills, and/or
+    subagents based on the type_filter.
+
+    Args:
+        config: The loaded mmm configuration.
+        tools_filter: If provided, only deploy to these tool names
+            (e.g. ["gemini", "claude"]). None means deploy to all.
+        type_filter: Set of asset types to deploy, e.g. {"context", "skills"}.
+        dry_run: If True, show what would happen but don't write anything.
+    """
     for tool_name, tool_config in config.tools.items():
         if tools_filter and tool_name not in tools_filter:
             continue
@@ -158,6 +285,20 @@ def deploy(
 
 
 def _deploy_context(content: str, tool_name: str, tool_config: ToolConfig, dry_run: bool) -> None:
+    """Write concatenated context content to a tool's target file.
+
+    Writes the pre-concatenated markdown string to the tool's context file
+    (e.g. ``~/.gemini/GEMINI.md``). If the target already exists, shows a
+    unified diff and prompts the user to confirm the overwrite. Skips
+    deployment if the content is empty or whitespace-only.
+
+    Args:
+        content: The concatenated markdown string (output of ``concatenate_files()``).
+        tool_name: Display name for log messages, e.g. "gemini".
+        tool_config: The tool's deployment config, providing ``context_dir``
+            and ``context_filename``.
+        dry_run: If True, show what would happen but don't write anything.
+    """
     target = tool_config.context_dir / tool_config.context_filename
 
     if not content.strip():
@@ -192,6 +333,24 @@ def _deploy_assets(
     asset_type: str,
     dry_run: bool,
 ) -> None:
+    """Copy skill or subagent directory trees to a tool's target location.
+
+    Each source directory is copied into ``target_dir`` using its own name.
+    For example, if ``dirs`` contains ``~/rules/skills/code-review/`` and
+    ``target_dir`` is ``~/.gemini/skills/``, the result is
+    ``~/.gemini/skills/code-review/`` (a full copy via ``shutil.copytree``).
+
+    If the destination already exists, shows a unified diff and prompts for
+    confirmation. Skips source directories that are empty or contain only
+    whitespace files.
+
+    Args:
+        dirs: Source directories to deploy (output of ``gather_asset_dirs()``).
+        target_dir: Parent directory to copy into, e.g. ``~/.gemini/skills/``.
+        tool_name: Display name for log messages, e.g. "gemini".
+        asset_type: "skill" or "subagent" — used in log messages.
+        dry_run: If True, show what would happen but don't write anything.
+    """
     for src_dir in dirs:
         # Skip if source directory has no real content
         src_files = [f for f in src_dir.rglob("*") if f.is_file()]
@@ -228,7 +387,16 @@ def show_diff(
     tools_filter: Optional[List[str]],
     type_filter: Set[str],
 ) -> None:
-    """Show what would change in target repos without deploying."""
+    """Show what would change in target repos without deploying.
+
+    Same iteration logic as ``deploy()``, but only prints diffs — never
+    writes to disk and never prompts for confirmation.
+
+    Args:
+        config: The loaded mmm configuration.
+        tools_filter: If provided, only diff these tool names. None means all.
+        type_filter: Set of asset types to diff, e.g. {"context", "skills"}.
+    """
     for tool_name, tool_config in config.tools.items():
         if tools_filter and tool_name not in tools_filter:
             continue
@@ -287,7 +455,16 @@ def show_diff(
 
 
 def show_status(config: Config) -> None:
-    """Show what is currently deployed at each tool's target directories."""
+    """Show what is currently deployed at each tool's target directories.
+
+    For each tool, reports:
+    - Context: file path and size in bytes, or "not deployed".
+    - Skills: lists deployed skill directory names, or "empty"/"not found".
+    - Subagents: same as skills.
+
+    Args:
+        config: The loaded mmm configuration.
+    """
     for tool_name, tool_config in config.tools.items():
         print(f"\n=== {tool_name} ===")
 
