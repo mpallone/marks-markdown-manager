@@ -1,6 +1,7 @@
 # TODO
 
-- [ ] Add tests
+- [x] Add tests
+- [x] Ignore empty files
 - [ ] Create an AI tool Skill for populating the config file — should prompt user for enough information to generate a `mmm.yaml` config
 - [ ] Skip deployment to a tool if that tool isn't installed
 - [ ] Support disabling a tool in the config — skip deployment to that tool without removing it from the config
