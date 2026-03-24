@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import shutil
 from fnmatch import fnmatch
 from pathlib import Path
@@ -56,6 +57,48 @@ def concatenate_files(files: List[Path]) -> str:
     for f in files:
         parts.append(f"<!-- Source: {f} -->")
         parts.append(f.read_text())
+    return "\n".join(parts)
+
+
+def _format_file_diff(current: str, incoming: str, label: str) -> str:
+    """Return a unified diff string between current and incoming content, or empty if identical."""
+    if current == incoming:
+        return ""
+    current_lines = current.splitlines(keepends=True)
+    incoming_lines = incoming.splitlines(keepends=True)
+    diff = difflib.unified_diff(
+        current_lines,
+        incoming_lines,
+        fromfile=f"{label} (current)",
+        tofile=f"{label} (incoming)",
+    )
+    return "".join(diff)
+
+
+def _diff_tree(src_dir: Path, dest_dir: Path) -> str:
+    """Compare all files in a source tree against a destination tree. Return combined diff."""
+    parts = []
+    # Diff files that exist in source
+    for src_file in sorted(src_dir.rglob("*")):
+        if not src_file.is_file():
+            continue
+        rel = src_file.relative_to(src_dir)
+        dest_file = dest_dir / rel
+        incoming = src_file.read_text()
+        if dest_file.exists():
+            current = dest_file.read_text()
+            diff = _format_file_diff(current, incoming, str(dest_file))
+            if diff:
+                parts.append(diff)
+        else:
+            # New file — show all lines as additions
+            lines = incoming.splitlines(keepends=True)
+            diff = difflib.unified_diff(
+                [], lines,
+                fromfile=f"{dest_file} (new file)",
+                tofile=f"{dest_file} (incoming)",
+            )
+            parts.append("".join(diff))
     return "\n".join(parts)
 
 
@@ -116,15 +159,27 @@ def deploy(
 
 def _deploy_context(content: str, tool_name: str, tool_config: ToolConfig, dry_run: bool) -> None:
     target = tool_config.context_dir / tool_config.context_filename
-    action = "Overwriting" if target.exists() else "Creating"
 
-    if target.exists() and not dry_run:
-        answer = input(f"[{tool_name}] {target} already exists. Overwrite? [Y/n] ").strip().lower()
-        if answer and answer != "y":
-            print(f"[{tool_name}] Skipping context deployment")
+    if not content.strip():
+        print(f"[{tool_name}] Skipping context — source content is empty")
+        return
+
+    if target.exists():
+        current = target.read_text()
+        diff = _format_file_diff(current, content, str(target))
+        if not diff:
+            print(f"[{tool_name}] Context: no changes")
             return
+        print(f"[{tool_name}] Context diff for {target}:")
+        print(diff)
+        if not dry_run:
+            answer = input(f"[{tool_name}] Overwrite {target}? [Y/n] ").strip().lower()
+            if answer and answer != "y":
+                print(f"[{tool_name}] Skipping context deployment")
+                return
+    else:
+        print(f"[{tool_name}] Creating {target}")
 
-    print(f"[{tool_name}] {action} {target}")
     if not dry_run:
         tool_config.context_dir.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
@@ -138,21 +193,97 @@ def _deploy_assets(
     dry_run: bool,
 ) -> None:
     for src_dir in dirs:
+        # Skip if source directory has no real content
+        src_files = [f for f in src_dir.rglob("*") if f.is_file()]
+        if not src_files or all(f.read_text().strip() == "" for f in src_files):
+            print(f"[{tool_name}] Skipping {asset_type} {src_dir.name} — source content is empty")
+            continue
+
         dest = target_dir / src_dir.name
-        action = "Overwriting" if dest.exists() else "Copying"
 
-        if dest.exists() and not dry_run:
-            answer = input(f"[{tool_name}] {dest} already exists. Overwrite? [Y/n] ").strip().lower()
-            if answer and answer != "y":
-                print(f"[{tool_name}] Skipping {asset_type} {src_dir.name}")
+        if dest.exists():
+            diff = _diff_tree(src_dir, dest)
+            if not diff:
+                print(f"[{tool_name}] {asset_type} {src_dir.name}: no changes")
                 continue
+            print(f"[{tool_name}] {asset_type} {src_dir.name} diff:")
+            print(diff)
+            if not dry_run:
+                answer = input(f"[{tool_name}] Overwrite {dest}? [Y/n] ").strip().lower()
+                if answer and answer != "y":
+                    print(f"[{tool_name}] Skipping {asset_type} {src_dir.name}")
+                    continue
+        else:
+            print(f"[{tool_name}] Copying {asset_type} {src_dir} -> {dest}")
 
-        print(f"[{tool_name}] {action} {asset_type} {src_dir} -> {dest}")
         if not dry_run:
             target_dir.mkdir(parents=True, exist_ok=True)
             if dest.exists():
                 shutil.rmtree(dest)
             shutil.copytree(src_dir, dest)
+
+
+def show_diff(
+    config: Config,
+    tools_filter: Optional[List[str]],
+    type_filter: Set[str],
+) -> None:
+    """Show what would change in target repos without deploying."""
+    for tool_name, tool_config in config.tools.items():
+        if tools_filter and tool_name not in tools_filter:
+            continue
+
+        if not _check_tool_base_dir(tool_name, tool_config):
+            print(f"[{tool_name}] Skipping — base directory not found on system")
+            continue
+
+        print(f"\n=== Diff for {tool_name} ===")
+
+        # Context
+        if "context" in type_filter and tool_config.context_dir and tool_config.context_filename:
+            files = gather_context_files(config.context)
+            if files:
+                content = concatenate_files(files)
+                target = tool_config.context_dir / tool_config.context_filename
+                if target.exists():
+                    current = target.read_text()
+                    diff = _format_file_diff(current, content, str(target))
+                    if diff:
+                        print(diff)
+                    else:
+                        print(f"[{tool_name}] Context: no changes")
+                else:
+                    print(f"[{tool_name}] Context: {target} (new file, {len(content)} bytes)")
+            else:
+                print(f"[{tool_name}] No context files found")
+
+        # Skills
+        if "skills" in type_filter and tool_config.skills_dir:
+            dirs = gather_asset_dirs(config.skills)
+            for src_dir in dirs:
+                dest = tool_config.skills_dir / src_dir.name
+                if dest.exists():
+                    diff = _diff_tree(src_dir, dest)
+                    if diff:
+                        print(diff)
+                    else:
+                        print(f"[{tool_name}] Skill {src_dir.name}: no changes")
+                else:
+                    print(f"[{tool_name}] Skill {src_dir.name}: new")
+
+        # Subagents
+        if "subagents" in type_filter and tool_config.subagents_dir:
+            dirs = gather_asset_dirs(config.subagents)
+            for src_dir in dirs:
+                dest = tool_config.subagents_dir / src_dir.name
+                if dest.exists():
+                    diff = _diff_tree(src_dir, dest)
+                    if diff:
+                        print(diff)
+                    else:
+                        print(f"[{tool_name}] Subagent {src_dir.name}: no changes")
+                else:
+                    print(f"[{tool_name}] Subagent {src_dir.name}: new")
 
 
 def show_status(config: Config) -> None:
