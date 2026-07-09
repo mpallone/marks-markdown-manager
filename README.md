@@ -197,6 +197,162 @@ mmm status --config mock-mmm.yaml    # see what's deployed
 mmm deploy --config mock-mmm.yaml --dry-run    # preview without writing
 ```
 
+## Configuration reference
+
+Everything `mmm` does is driven by one YAML file (conventionally `mmm.yaml`).
+This section documents every option it supports.
+
+The file has two halves:
+
+- **What to deploy** — the `context`, `skills`, and `subagents` sections.
+  Each lists where your source material lives.
+- **Where it goes** — the `tools` section. Each entry maps one AI tool to
+  the directories that tool reads its configuration from.
+
+Every section and every key is optional. If a section is missing, `mmm`
+simply has nothing to do for that asset type — so a config with no `tools:`
+section deploys nothing at all. A minimal useful config is one source and
+one tool:
+
+```yaml
+context:
+  sources:
+    - ~/my-ai-config/AGENTS.md
+tools:
+  claude:
+    context_dir: "~/.claude/"
+    context_filename: "CLAUDE.md"
+```
+
+### `context` — markdown files merged into one file per tool
+
+Context is the "always loaded" material: persona, coding standards, general
+instructions. At deploy time, all context sources are concatenated into a
+**single** markdown file per tool, written to that tool's
+`context_dir/context_filename`.
+
+```yaml
+context:
+  sources:
+    - ~/personal-ai-config/AGENTS.md     # a single file
+    - ~/work-ai-config/context/          # or a whole directory
+  exclude:
+    - "draft-*"                          # skip files by name pattern
+```
+
+- **`sources`** — a list of paths. Each entry is either a single `.md` file
+  (included as-is) or a directory (every `.md` file inside it is included,
+  searched recursively, in alphabetical order). Sources are concatenated in
+  the order you list them, so put the most general material first.
+- **`exclude`** — a list of shell-style glob patterns (`*`, `?`, `[abc]`)
+  matched against the **filename only**, not the full path. `draft-*` skips
+  `draft-ideas.md` wherever it lives; it will not match on directory names
+  like `drafts/`.
+
+In the merged output, each file's content is prefixed with a
+`<!-- Source: /path/to/file.md -->` comment so you can always trace a rule
+back to the file it came from.
+
+### `skills` and `subagents` — directories copied whole
+
+Skills and subagents are not merged — each one is a directory (containing a
+`SKILL.md` and any supporting files) that gets copied wholesale into every
+tool's skills/subagents location, keeping its own name. The two sections
+behave identically; they only differ in which target directory they deploy to.
+
+```yaml
+skills:
+  sources:
+    - ~/personal-ai-config/skills/       # a folder of skills: each subdirectory is one skill
+    - ~/work-ai-config/one-off-skill/    # or a single skill directory itself
+  exclude:
+    - "experimental-*"                   # skip skills by directory name
+
+subagents:
+  sources:
+    - ~/personal-ai-config/subagents/
+  exclude: []
+```
+
+- **`sources`** — a list of directories. Each entry is either a *folder of
+  skills* (its immediate subdirectories are the skills) or a *single skill
+  directory* (if the directory itself directly contains `.md` files, it is
+  deployed as one skill under its own name). A directory only counts as a
+  skill if it has at least one `.md` file directly inside it — deeper
+  nesting is not searched.
+- **`exclude`** — same glob patterns as above, matched against the **skill's
+  directory name**. `experimental-*` skips a skill folder named
+  `experimental-parser/`.
+
+If two sources contain a skill with the same directory name, they collide at
+the destination: the later one asks to overwrite the earlier one. Rename one
+of them if you want both deployed.
+
+### `tools` — where each tool wants its files
+
+Each entry under `tools:` describes one AI tool. The name of the entry
+(`claude`, `gemini`, ...) is just a label you choose — it shows up in
+`mmm`'s output and is what you pass to `--tools` to target specific tools.
+The four keys inside it are what matter:
+
+| Key | What it does | If omitted |
+|---|---|---|
+| `context_dir` | Directory the merged context file is written into | No context deployed to this tool |
+| `context_filename` | Name of that merged file (e.g. `CLAUDE.md`) | No context deployed (both keys are required for context) |
+| `skills_dir` | Directory each skill is copied into, as its own subdirectory | No skills deployed to this tool |
+| `subagents_dir` | Same as `skills_dir`, but for subagents | No subagents deployed to this tool |
+
+Only include the keys a tool actually supports. This is how you express
+per-tool differences:
+
+```yaml
+tools:
+  windsurf:
+    context_dir: "~/.codeium/windsurf/rules/"
+    context_filename: "global-context.md"
+    skills_dir: "~/.codeium/windsurf/skills/"
+    # no subagents_dir — Windsurf doesn't support subagents,
+    # so subagents are simply never deployed to it
+  gemini:
+    context_dir: "~/.gemini/"
+    context_filename: "GEMINI.md"
+    skills_dir: "~/.gemini/skills/"
+    subagents_dir: "~/.gemini/skills/"   # Gemini reads both from one place —
+                                         # pointing both keys at it is fine
+```
+
+### Path rules
+
+- `~` is expanded to your home directory in every path.
+- Relative paths (like `./mock/context/`) are resolved from the directory
+  you run `mmm` in — handy for testing inside a repo, but use `~` or
+  absolute paths in your real config so it works from anywhere.
+- If a source path doesn't exist, `mmm` prints a warning and carries on.
+  This is deliberate: it lets one config serve machines where, say, the
+  work repo isn't checked out.
+
+### What happens at deploy time
+
+Safety behavior you get on every run, with no extra configuration:
+
+- **Tools you don't have are skipped.** Before deploying to a tool, `mmm`
+  checks that its target directory (or that directory's parent) exists. No
+  `~/.gemini/`? Gemini is skipped with a note, not an error.
+- **Nothing is overwritten silently.** If a target file already exists and
+  differs, `mmm` shows a unified diff of exactly what would change and asks
+  `Overwrite? [Y/n]` — per file, per skill. If nothing changed, it says so
+  and moves on.
+- **`--dry-run` never writes.** It prints what would happen and exits.
+  `mmm diff` does the same job in read-only form.
+- **Empty skills are skipped.** A skill or subagent whose files are all
+  empty is not deployed. (Empty context files are currently still included
+  in the merged output — each contributes just its `<!-- Source: ... -->`
+  header line.)
+- **Deployed skills are replaced wholesale.** When you confirm a skill
+  overwrite, the destination directory is deleted and re-copied. Treat
+  deployed copies as disposable: make edits in your source repos, never in
+  the tool directories, or the next deploy will discard them.
+
 ## Dependencies
 
 - Python >= 3.9
