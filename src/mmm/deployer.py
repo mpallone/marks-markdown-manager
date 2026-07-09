@@ -171,15 +171,16 @@ def _diff_tree(src_dir: Path, dest_dir: Path) -> str:
 
     Walks the source directory recursively. For each file, if it exists in
     the destination, produces a unified diff. If it's new (not in dest),
-    shows all lines as additions.
+    shows all lines as additions. Files that exist only in the destination
+    are shown as deletions — replacing the destination would remove them.
 
     Args:
         src_dir: The source directory (what we want to deploy).
         dest_dir: The destination directory (what's currently deployed).
 
     Returns:
-        Combined unified diff string for all changed/new files, or empty
-        string if the trees are identical.
+        Combined unified diff string for all changed/new/removed files, or
+        empty string if the trees are identical.
     """
     parts = []
     # Diff files that exist in source
@@ -203,6 +204,20 @@ def _diff_tree(src_dir: Path, dest_dir: Path) -> str:
                 tofile=f"{dest_file} (incoming)",
             )
             parts.append("".join(diff))
+    # Files that exist only in the destination — lost if it's replaced
+    for dest_file in sorted(dest_dir.rglob("*")):
+        if not dest_file.is_file():
+            continue
+        rel = dest_file.relative_to(dest_dir)
+        if (src_dir / rel).is_file():
+            continue
+        lines = dest_file.read_text().splitlines(keepends=True)
+        diff = difflib.unified_diff(
+            lines, [],
+            fromfile=f"{dest_file} (current)",
+            tofile=f"{dest_file} (will be removed)",
+        )
+        parts.append("".join(diff))
     return "\n".join(parts)
 
 
@@ -221,7 +236,9 @@ def _classify_dest(src_dir: Path, dest: Path) -> str:
     Returns:
         One of ``'missing'`` (nothing there), ``'linked'`` (symlink already
         pointing at src_dir), ``'wrong-link'`` (symlink to somewhere else),
-        ``'broken-link'`` (symlink whose target is gone), ``'copy'`` (a real
+        ``'broken-link'`` (symlink whose target is gone), ``'self'`` (dest IS
+        the source directory — e.g. the tool's target dir points straight at
+        the sources, possibly through a symlinked parent), ``'copy'`` (a real
         directory — a legacy copy from before symlink deployment), or
         ``'file'`` (a regular file).
     """
@@ -232,6 +249,11 @@ def _classify_dest(src_dir: Path, dest: Path) -> str:
             return "linked"
         return "wrong-link"
     if dest.is_dir():
+        # A real dir that resolves to the source is the source itself
+        # (same path, or reached through a symlinked parent). Never treat
+        # it as a replaceable copy: removing it would destroy the source.
+        if dest.resolve() == src_dir.resolve():
+            return "self"
         return "copy"
     if dest.exists():
         return "file"
@@ -395,7 +417,10 @@ def _deploy_assets(
     Anything else at the destination — a legacy copied directory from before
     symlink deployment, a symlink pointing elsewhere, a broken symlink, or a
     regular file — is described and replaced only after user confirmation.
-    Skips source directories that are empty or contain only whitespace files.
+    A destination that is the source directory itself (the target dir points
+    straight at the sources, possibly through a symlinked parent) is never
+    touched. Skips source directories that are empty or contain only
+    whitespace files.
 
     Args:
         dirs: Source directories to deploy (output of ``gather_asset_dirs()``).
@@ -419,6 +444,12 @@ def _deploy_assets(
 
         if state == "linked":
             print(f"[{tool_name}] {asset_type} {src_dir.name}: no changes (symlink up to date)")
+            continue
+        if state == "self":
+            print(
+                f"[{tool_name}] {asset_type} {src_dir.name}: destination is the "
+                f"source directory itself — nothing to link"
+            )
             continue
         if state == "missing":
             print(f"[{tool_name}] Linking {asset_type} {dest} -> {link_target}")
@@ -477,6 +508,11 @@ def _show_asset_diff(
         state = _classify_dest(src_dir, dest)
         if state == "linked":
             print(f"[{tool_name}] {asset_label} {src_dir.name}: no changes")
+        elif state == "self":
+            print(
+                f"[{tool_name}] {asset_label} {src_dir.name}: destination is the "
+                f"source directory itself — nothing to deploy"
+            )
         elif state == "missing":
             print(
                 f"[{tool_name}] {asset_label} {src_dir.name}: new — "
@@ -565,8 +601,10 @@ def _show_asset_status(label: str, asset_dir: Path) -> None:
 
     Lists each entry on its own line: symlinks show their target (flagged
     ``(BROKEN)`` when the target is gone), real directories are flagged as
-    probable legacy copies. Checks ``is_symlink()`` before anything else —
-    filtering on ``is_dir()`` would silently hide broken links.
+    probable legacy copies, and stray regular files are flagged too (hidden
+    files like ``.gitkeep`` are skipped). Checks ``is_symlink()`` before
+    anything else — filtering on ``is_dir()`` would silently hide broken
+    links.
 
     Args:
         label: "Skills" or "Subagents" — used as the block header.
@@ -582,6 +620,8 @@ def _show_asset_status(label: str, asset_dir: Path) -> None:
             lines.append(f"    {entry.name} -> {entry.readlink()}{broken}")
         elif entry.is_dir():
             lines.append(f"    {entry.name} (directory, not a symlink — legacy copy?)")
+        elif not entry.name.startswith("."):
+            lines.append(f"    {entry.name} (file, not a symlink)")
     if lines:
         print(f"  {label} ({asset_dir}):")
         for line in lines:
