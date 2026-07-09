@@ -91,17 +91,17 @@ def main(argv: list[str] | None = None) -> None:
     type_filter = getattr(args, "type", None)
 
     if args.command == "deploy":
-        approved_types = {"context", "skills", "subagents"}
+        selected_types = {"context", "skills", "subagents"}
         if type_filter:
-            approved_types = {type_filter}
+            selected_types = {type_filter}
 
-        deploy(config, tools_filter=tools_filter, type_filter=approved_types, dry_run=args.dry_run)
+        deploy(config, tools_filter=tools_filter, type_filter=selected_types, dry_run=args.dry_run)
 
     elif args.command == "diff":
-        approved_types = {"context", "skills", "subagents"}
+        selected_types = {"context", "skills", "subagents"}
         if type_filter:
-            approved_types = {type_filter}
-        show_diff(config, tools_filter=tools_filter, type_filter=approved_types)
+            selected_types = {type_filter}
+        show_diff(config, tools_filter=tools_filter, type_filter=selected_types)
 
     elif args.command == "status":
         show_status(config)
