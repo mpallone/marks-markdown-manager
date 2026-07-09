@@ -27,10 +27,12 @@ work repo with employer-specific material:
         └── SKILL.md
 ```
 
-A config that combines them (tool targets omitted — use the `tools:` section
-from `mmm.yaml.example`):
+The config file (`mmm.yaml`) has two halves: **what** to deploy (your
+sources) and **where** each tool wants it (the targets). Here is a complete,
+working config for the layout above, deploying to Claude Code and Gemini CLI:
 
 ```yaml
+# WHAT to deploy: your sources, in the order they should appear
 context:
   sources:
     - ~/personal-ai-config/AGENTS.md   # generic writing style and preferences
@@ -42,18 +44,29 @@ skills:
     - ~/personal-ai-config/skills/     # skills from your personal repo
     - ~/work-ai-config/skills/         # skills from your work repo
   exclude: []
+
+# WHERE each tool expects it — add other tools the same way
+# (see mmm.yaml.example for Codex CLI and Windsurf entries)
+tools:
+  claude:
+    context_dir: "~/.claude/"          # combined context becomes ~/.claude/CLAUDE.md
+    context_filename: "CLAUDE.md"
+    skills_dir: "~/.claude/skills/"    # each skill is copied here as its own directory
+  gemini:
+    context_dir: "~/.gemini/"          # same content, Gemini's conventions
+    context_filename: "GEMINI.md"
+    skills_dir: "~/.gemini/skills/"
 ```
 
-On `mmm deploy`:
+Run `mmm deploy --config mmm.yaml`, and:
 
 - The two `AGENTS.md` files are concatenated, in the order listed, into a
-  single context file per tool (`~/.claude/CLAUDE.md`, `~/.gemini/GEMINI.md`,
-  `~/.codex/AGENTS.md`, ...). Each section is prefixed with a
-  `<!-- Source: ... -->` comment so you can always tell which repo a rule
-  came from.
+  single context file per tool: `~/.claude/CLAUDE.md` and `~/.gemini/GEMINI.md`.
+  Each section is prefixed with a `<!-- Source: ... -->` comment so you can
+  always tell which repo a rule came from.
 - Skills are gathered from both repos and each is copied as its own directory
   into every tool's skills location, so `code-review/` and `deploy-runbook/`
-  end up side by side in e.g. `~/.claude/skills/`.
+  end up side by side in `~/.claude/skills/` and `~/.gemini/skills/`.
 
 No copy-pasting between tool directories, and no wondering which copy is
 current — edit the source repos and redeploy.
