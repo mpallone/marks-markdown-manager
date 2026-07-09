@@ -8,13 +8,13 @@ A Python 3 CLI tool that distributes AI tool configuration (global context, skil
 src/mmm/
 ├── cli.py        — argparse entry point with deploy/status subcommands
 ├── config.py     — YAML config loading into dataclasses (Config, AssetSources, ToolConfig)
-└── deployer.py   — file gathering, concatenation, and copying to tool directories
+└── deployer.py   — file gathering, context concatenation, and symlinking skills/subagents into tool directories
 ```
 
 ## How deployment works
 
 1. Load config, gather source files for each asset type
-2. **Deploy phase**: for each tool, copy files to target directories (with user confirmation before overwriting)
+2. **Deploy phase**: for each tool, write the merged context file and symlink each skill/subagent source directory into the target directories (with user confirmation before overwriting or replacing anything that already exists)
 
 ## Target tool directories
 
