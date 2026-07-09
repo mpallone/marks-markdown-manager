@@ -2,7 +2,7 @@
 
 A CLI tool for distributing AI tool configuration across multiple AI coding assistants.
 
-## Example: combining personal and work sources
+## Example of why this is useful: combining personal and work sources
 
 Every AI coding assistant — Claude Code, Gemini CLI, Codex CLI, Windsurf —
 wants the same kinds of configuration (global context, skills, subagents),
@@ -134,7 +134,7 @@ Edit `~/mmm.yaml` to:
 Context sources can be individual `.md` files or directories, in which case
 every `.md` file inside them is included. Skill sources are directories whose
 subdirectories each hold one skill. For a concrete two-repo config, see
-[the example above](#example-combining-personal-and-work-sources).
+[the example above](#example-of-why-this-is-useful-combining-personal-and-work-sources).
 
 ### 4. Deploy
 
