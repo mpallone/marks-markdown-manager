@@ -235,7 +235,7 @@ def deploy(
     type_filter: Set[str],
     dry_run: bool,
 ) -> None:
-    """Deploy approved asset types to all enabled tools.
+    """Deploy the selected asset types to all enabled tools.
 
     Iterates over each tool in the config, skipping tools not on this machine
     or not in the tools_filter. For each tool, deploys context, skills, and/or

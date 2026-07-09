@@ -79,6 +79,57 @@ Edit `~/mmm.yaml` to:
 - Point `sources` at your actual content directories
 - Adjust tool target directories if needed (defaults in the example cover standard locations)
 
+#### Example: combining personal and work sources
+
+Sources don't all have to live in one place. A common setup is a personal repo
+with generic preferences and a work repo with employer-specific material:
+
+```
+~/personal-ai-config/            # personal repo
+├── AGENTS.md                    # generic: writing style, tone, general preferences
+└── skills/
+    └── code-review/
+        └── SKILL.md
+
+~/work-ai-config/                # work repo
+├── AGENTS.md                    # work-specific: team conventions, internal terminology
+└── skills/
+    └── deploy-runbook/
+        └── SKILL.md
+```
+
+A config that combines them (tool targets omitted — use the `tools:` section
+from `mmm.yaml.example`):
+
+```yaml
+context:
+  sources:
+    - ~/personal-ai-config/AGENTS.md   # generic writing style and preferences
+    - ~/work-ai-config/AGENTS.md       # work-specific standards
+  exclude: []
+
+skills:
+  sources:
+    - ~/personal-ai-config/skills/     # skills from your personal repo
+    - ~/work-ai-config/skills/         # skills from your work repo
+  exclude: []
+```
+
+On `mmm deploy`:
+
+- The two `AGENTS.md` files are concatenated, in the order listed, into a
+  single context file per tool (`~/.claude/CLAUDE.md`, `~/.gemini/GEMINI.md`,
+  `~/.codex/AGENTS.md`, ...). Each section is prefixed with a
+  `<!-- Source: ... -->` comment so you can always tell which repo a rule
+  came from.
+- Skills are gathered from both repos and each is copied as its own directory
+  into every tool's skills location, so `code-review/` and `deploy-runbook/`
+  end up side by side in e.g. `~/.claude/skills/`.
+
+Context sources can be individual `.md` files (as above) or directories, in
+which case every `.md` file inside them is included. Skill sources are
+directories whose subdirectories each hold one skill.
+
 ### 4. Deploy
 
 ```bash
