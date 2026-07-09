@@ -76,8 +76,8 @@ class ToolConfig:
         context_dir: Directory where the concatenated context file is written.
         context_filename: Name of the output context file (e.g. "GEMINI.md").
             Both context_dir and context_filename must be set for context deployment.
-        skills_dir: Directory where skill subdirectories are copied into.
-        subagents_dir: Directory where subagent subdirectories are copied into.
+        skills_dir: Directory where symlinks to skill directories are created.
+        subagents_dir: Directory where symlinks to subagent directories are created.
     """
 
     context_dir: Optional[Path] = None

@@ -6,8 +6,8 @@ and others:
 
 - **context**: Markdown files concatenated into a single rules file per tool
   (e.g. all your .md files merged into ~/.gemini/GEMINI.md)
-- **skills**: Directory trees copied wholesale to each tool's skills location
-- **subagents**: Directory trees copied wholesale to each tool's subagents location
+- **skills**: Source directories symlinked into each tool's skills location
+- **subagents**: Source directories symlinked into each tool's subagents location
 
 Usage::
 

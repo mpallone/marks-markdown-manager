@@ -2,7 +2,8 @@
 
 Provides three subcommands:
 
-- ``deploy``: Copy assets from source directories to each tool's target location.
+- ``deploy``: Deploy assets to each tool's target location — context is
+  written as a merged file, skills/subagents are symlinked to their sources.
 - ``diff``: Preview what would change without writing anything.
 - ``status``: Show what is currently deployed at each tool's target directories.
 
@@ -42,9 +43,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     # deploy
-    dp = sub.add_parser("deploy", help="Deploy context, skills, and subagents to AI tools")
+    dp = sub.add_parser("deploy", help="Deploy context (written) and skills/subagents (symlinked) to AI tools")
     dp.add_argument("--config", required=True, help="Path to mmm.yaml config file")
-    dp.add_argument("--dry-run", action="store_true", help="Print what would be copied without writing")
+    dp.add_argument("--dry-run", action="store_true", help="Print what would be written or linked without changing anything")
     dp.add_argument("--type", choices=["context", "skills", "subagents"], help="Deploy only this asset type")
     dp.add_argument("--tools", help="Comma-separated list of tools to deploy to (e.g. gemini,claude)")
 
