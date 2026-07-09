@@ -6,15 +6,16 @@ Handles three asset types, each with different deployment strategies:
   ``<!-- Source: path -->`` headers) into a single file per tool.
   Example: 5 markdown files → one ``~/.gemini/GEMINI.md``.
 
-- **skills**: Each skill is a directory containing .md files. Directories are
-  copied wholesale into the tool's skills location via ``shutil.copytree``.
-  Example: ``~/rules/skills/code-review/`` → ``~/.gemini/skills/code-review/``.
+- **skills**: Each skill is a directory containing .md files. A symlink to
+  the source directory is created in the tool's skills location, so source
+  edits are live immediately without redeploying.
+  Example: ``~/.gemini/skills/code-review`` → ``~/rules/skills/code-review/``.
 
-- **subagents**: Same as skills — directory trees copied to the tool's
-  subagents location.
+- **subagents**: Same as skills — symlinks to the source directories are
+  created in the tool's subagents location.
 
-All write operations show a unified diff first and prompt for confirmation
-(unless ``dry_run=True``).
+All write operations that would replace existing content show what would
+change first and prompt for confirmation (unless ``dry_run=True``).
 """
 
 from __future__ import annotations
@@ -205,6 +206,54 @@ def _diff_tree(src_dir: Path, dest_dir: Path) -> str:
     return "\n".join(parts)
 
 
+def _classify_dest(src_dir: Path, dest: Path) -> str:
+    """Classify what currently occupies an asset deploy destination.
+
+    Checks ``is_symlink()`` before ``exists()`` because a broken symlink
+    reports ``is_symlink() == True`` but ``exists() == False`` (``exists()``
+    follows the link). Link correctness is compared via ``resolve()`` on both
+    sides, never ``samefile()``, which raises on broken links.
+
+    Args:
+        src_dir: The source directory the symlink should point to.
+        dest: The destination path to classify.
+
+    Returns:
+        One of ``'missing'`` (nothing there), ``'linked'`` (symlink already
+        pointing at src_dir), ``'wrong-link'`` (symlink to somewhere else),
+        ``'broken-link'`` (symlink whose target is gone), ``'copy'`` (a real
+        directory — a legacy copy from before symlink deployment), or
+        ``'file'`` (a regular file).
+    """
+    if dest.is_symlink():           # True even when the link target is gone
+        if not dest.exists():       # exists() follows the link
+            return "broken-link"
+        if dest.resolve() == src_dir.resolve():
+            return "linked"
+        return "wrong-link"
+    if dest.is_dir():
+        return "copy"
+    if dest.exists():
+        return "file"
+    return "missing"
+
+
+def _remove_dest(dest: Path) -> None:
+    """Remove whatever occupies a deploy destination, symlink-safely.
+
+    Symlinks and regular files are ``unlink()``-ed; only real directories go
+    through ``shutil.rmtree`` (rmtree on a symlink raises, and following the
+    link would delete source content).
+
+    Args:
+        dest: The destination path to remove. Missing paths are a no-op.
+    """
+    if dest.is_symlink() or dest.is_file():
+        dest.unlink()
+    elif dest.is_dir():
+        shutil.rmtree(dest)
+
+
 def _check_tool_base_dir(tool_name: str, tool_config: ToolConfig) -> bool:
     """Check if the tool's base directory exists on this machine.
 
@@ -333,20 +382,24 @@ def _deploy_assets(
     asset_type: str,
     dry_run: bool,
 ) -> None:
-    """Copy skill or subagent directory trees to a tool's target location.
+    """Symlink skill or subagent source directories into a tool's target location.
 
-    Each source directory is copied into ``target_dir`` using its own name.
-    For example, if ``dirs`` contains ``~/rules/skills/code-review/`` and
-    ``target_dir`` is ``~/.gemini/skills/``, the result is
-    ``~/.gemini/skills/code-review/`` (a full copy via ``shutil.copytree``).
+    Each source directory gets a symlink in ``target_dir`` under its own name,
+    pointing at the resolved (absolute) source path. For example, if ``dirs``
+    contains ``~/rules/skills/code-review/`` and ``target_dir`` is
+    ``~/.gemini/skills/``, the result is a symlink
+    ``~/.gemini/skills/code-review -> /home/user/rules/skills/code-review``.
+    Source edits are therefore live immediately; re-running deploy on an
+    already-linked asset is a no-op (idempotent).
 
-    If the destination already exists, shows a unified diff and prompts for
-    confirmation. Skips source directories that are empty or contain only
-    whitespace files.
+    Anything else at the destination — a legacy copied directory from before
+    symlink deployment, a symlink pointing elsewhere, a broken symlink, or a
+    regular file — is described and replaced only after user confirmation.
+    Skips source directories that are empty or contain only whitespace files.
 
     Args:
         dirs: Source directories to deploy (output of ``gather_asset_dirs()``).
-        target_dir: Parent directory to copy into, e.g. ``~/.gemini/skills/``.
+        target_dir: Parent directory to link into, e.g. ``~/.gemini/skills/``.
         tool_name: Display name for log messages, e.g. "gemini".
         asset_type: "skill" or "subagent" — used in log messages.
         dry_run: If True, show what would happen but don't write anything.
@@ -359,27 +412,95 @@ def _deploy_assets(
             continue
 
         dest = target_dir / src_dir.name
+        # Resolve to an absolute path so links work regardless of cwd
+        # (config allows relative source paths like ./mock/skills/)
+        link_target = src_dir.resolve()
+        state = _classify_dest(src_dir, dest)
 
-        if dest.exists():
-            diff = _diff_tree(src_dir, dest)
-            if not diff:
-                print(f"[{tool_name}] {asset_type} {src_dir.name}: no changes")
-                continue
-            print(f"[{tool_name}] {asset_type} {src_dir.name} diff:")
-            print(diff)
+        if state == "linked":
+            print(f"[{tool_name}] {asset_type} {src_dir.name}: no changes (symlink up to date)")
+            continue
+        if state == "missing":
+            print(f"[{tool_name}] Linking {asset_type} {dest} -> {link_target}")
+        else:
+            if state == "copy":
+                print(
+                    f"[{tool_name}] {asset_type} {src_dir.name}: existing directory "
+                    f"will be replaced by symlink -> {link_target}"
+                )
+                diff = _diff_tree(src_dir, dest)
+                print(diff if diff else f"[{tool_name}] (contents identical)")
+            elif state in ("wrong-link", "broken-link"):
+                label = "broken symlink" if state == "broken-link" else "symlink"
+                print(
+                    f"[{tool_name}] {asset_type} {src_dir.name}: {label} currently "
+                    f"-> {dest.readlink()}, will repoint to {link_target}"
+                )
+            else:  # file
+                print(
+                    f"[{tool_name}] {asset_type} {src_dir.name}: existing file "
+                    f"will be replaced by symlink -> {link_target}"
+                )
             if not dry_run:
-                answer = input(f"[{tool_name}] Overwrite {dest}? [Y/n] ").strip().lower()
+                answer = input(f"[{tool_name}] Replace {dest} with symlink? [Y/n] ").strip().lower()
                 if answer and answer != "y":
                     print(f"[{tool_name}] Skipping {asset_type} {src_dir.name}")
                     continue
-        else:
-            print(f"[{tool_name}] Copying {asset_type} {src_dir} -> {dest}")
 
         if not dry_run:
             target_dir.mkdir(parents=True, exist_ok=True)
-            if dest.exists():
-                shutil.rmtree(dest)
-            shutil.copytree(src_dir, dest)
+            _remove_dest(dest)
+            dest.symlink_to(link_target, target_is_directory=True)
+
+
+def _show_asset_diff(
+    dirs: List[Path],
+    target_dir: Path,
+    tool_name: str,
+    asset_label: str,
+) -> None:
+    """Report the deploy state of each asset destination without writing.
+
+    For each source directory, classifies the destination and prints what a
+    deploy would do: nothing (already linked), create a symlink (missing),
+    replace a legacy copied directory (with a content diff), repoint a wrong
+    or broken symlink, or replace a regular file.
+
+    Args:
+        dirs: Source directories to report on (output of ``gather_asset_dirs()``).
+        target_dir: Parent directory the symlinks live in, e.g. ``~/.gemini/skills/``.
+        tool_name: Display name for log messages, e.g. "gemini".
+        asset_label: "Skill" or "Subagent" — used in log messages.
+    """
+    for src_dir in dirs:
+        dest = target_dir / src_dir.name
+        state = _classify_dest(src_dir, dest)
+        if state == "linked":
+            print(f"[{tool_name}] {asset_label} {src_dir.name}: no changes")
+        elif state == "missing":
+            print(
+                f"[{tool_name}] {asset_label} {src_dir.name}: new — "
+                f"will create symlink {dest} -> {src_dir.resolve()}"
+            )
+        elif state == "copy":
+            print(
+                f"[{tool_name}] {asset_label} {src_dir.name}: directory (legacy copy) — "
+                f"will be replaced by symlink -> {src_dir.resolve()}"
+            )
+            diff = _diff_tree(src_dir, dest)
+            if diff:
+                print(diff)
+        elif state in ("wrong-link", "broken-link"):
+            broken = " (broken)" if state == "broken-link" else ""
+            print(
+                f"[{tool_name}] {asset_label} {src_dir.name}: symlink -> "
+                f"{dest.readlink()}{broken} — will repoint to {src_dir.resolve()}"
+            )
+        else:  # file
+            print(
+                f"[{tool_name}] {asset_label} {src_dir.name}: file — "
+                f"will be replaced by symlink"
+            )
 
 
 def show_diff(
@@ -389,8 +510,11 @@ def show_diff(
 ) -> None:
     """Show what would change in target repos without deploying.
 
-    Same iteration logic as ``deploy()``, but only prints diffs — never
-    writes to disk and never prompts for confirmation.
+    Same iteration logic as ``deploy()``, but only prints — never writes to
+    disk and never prompts for confirmation. Context targets get a unified
+    content diff; skill/subagent targets get a state-based report (already
+    linked, new symlink, legacy copy to replace, wrong/broken symlink to
+    repoint, or file to replace).
 
     Args:
         config: The loaded mmm configuration.
@@ -428,30 +552,42 @@ def show_diff(
         # Skills
         if "skills" in type_filter and tool_config.skills_dir:
             dirs = gather_asset_dirs(config.skills)
-            for src_dir in dirs:
-                dest = tool_config.skills_dir / src_dir.name
-                if dest.exists():
-                    diff = _diff_tree(src_dir, dest)
-                    if diff:
-                        print(diff)
-                    else:
-                        print(f"[{tool_name}] Skill {src_dir.name}: no changes")
-                else:
-                    print(f"[{tool_name}] Skill {src_dir.name}: new")
+            _show_asset_diff(dirs, tool_config.skills_dir, tool_name, "Skill")
 
         # Subagents
         if "subagents" in type_filter and tool_config.subagents_dir:
             dirs = gather_asset_dirs(config.subagents)
-            for src_dir in dirs:
-                dest = tool_config.subagents_dir / src_dir.name
-                if dest.exists():
-                    diff = _diff_tree(src_dir, dest)
-                    if diff:
-                        print(diff)
-                    else:
-                        print(f"[{tool_name}] Subagent {src_dir.name}: no changes")
-                else:
-                    print(f"[{tool_name}] Subagent {src_dir.name}: new")
+            _show_asset_diff(dirs, tool_config.subagents_dir, tool_name, "Subagent")
+
+
+def _show_asset_status(label: str, asset_dir: Path) -> None:
+    """Print one status block for a tool's skills or subagents directory.
+
+    Lists each entry on its own line: symlinks show their target (flagged
+    ``(BROKEN)`` when the target is gone), real directories are flagged as
+    probable legacy copies. Checks ``is_symlink()`` before anything else —
+    filtering on ``is_dir()`` would silently hide broken links.
+
+    Args:
+        label: "Skills" or "Subagents" — used as the block header.
+        asset_dir: The tool's deployed skills/subagents directory.
+    """
+    if not asset_dir.exists():
+        print(f"  {label}: {asset_dir} (directory not found)")
+        return
+    lines = []
+    for entry in sorted(asset_dir.iterdir()):
+        if entry.is_symlink():
+            broken = " (BROKEN)" if not entry.exists() else ""
+            lines.append(f"    {entry.name} -> {entry.readlink()}{broken}")
+        elif entry.is_dir():
+            lines.append(f"    {entry.name} (directory, not a symlink — legacy copy?)")
+    if lines:
+        print(f"  {label} ({asset_dir}):")
+        for line in lines:
+            print(line)
+    else:
+        print(f"  {label} ({asset_dir}): (empty)")
 
 
 def show_status(config: Config) -> None:
@@ -459,7 +595,9 @@ def show_status(config: Config) -> None:
 
     For each tool, reports:
     - Context: file path and size in bytes, or "not deployed".
-    - Skills: lists deployed skill directory names, or "empty"/"not found".
+    - Skills: each deployed entry with its symlink target — broken links are
+      flagged ``(BROKEN)``, real directories are flagged as probable legacy
+      copies — or "empty"/"not found".
     - Subagents: same as skills.
 
     Args:
@@ -484,22 +622,8 @@ def show_status(config: Config) -> None:
 
         # Skills
         if tool_config.skills_dir:
-            if tool_config.skills_dir.exists():
-                skills = [d.name for d in sorted(tool_config.skills_dir.iterdir()) if d.is_dir()]
-                if skills:
-                    print(f"  Skills ({tool_config.skills_dir}): {', '.join(skills)}")
-                else:
-                    print(f"  Skills ({tool_config.skills_dir}): (empty)")
-            else:
-                print(f"  Skills: {tool_config.skills_dir} (directory not found)")
+            _show_asset_status("Skills", tool_config.skills_dir)
 
         # Subagents
         if tool_config.subagents_dir:
-            if tool_config.subagents_dir.exists():
-                agents = [d.name for d in sorted(tool_config.subagents_dir.iterdir()) if d.is_dir()]
-                if agents:
-                    print(f"  Subagents ({tool_config.subagents_dir}): {', '.join(agents)}")
-                else:
-                    print(f"  Subagents ({tool_config.subagents_dir}): (empty)")
-            else:
-                print(f"  Subagents: {tool_config.subagents_dir} (directory not found)")
+            _show_asset_status("Subagents", tool_config.subagents_dir)
