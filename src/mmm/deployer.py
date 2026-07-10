@@ -305,6 +305,7 @@ def deploy(
     tools_filter: Optional[List[str]],
     type_filter: Set[str],
     dry_run: bool,
+    assume_yes: bool = False,
 ) -> None:
     """Deploy the selected asset types to all enabled tools.
 
@@ -318,6 +319,8 @@ def deploy(
             (e.g. ["gemini", "claude"]). None means deploy to all.
         type_filter: Set of asset types to deploy, e.g. {"context", "skills"}.
         dry_run: If True, show what would happen but don't write anything.
+        assume_yes: If True, skip the interactive overwrite/replace
+            confirmation prompts and proceed automatically.
     """
     for tool_name, tool_config in config.tools.items():
         if tools_filter and tool_name not in tools_filter:
@@ -334,7 +337,7 @@ def deploy(
             files = gather_context_files(config.context)
             if files:
                 content = concatenate_files(files)
-                _deploy_context(content, tool_name, tool_config, dry_run)
+                _deploy_context(content, tool_name, tool_config, dry_run, assume_yes)
             else:
                 print(f"[{tool_name}] No context files found to deploy")
 
@@ -342,7 +345,7 @@ def deploy(
         if "skills" in type_filter and tool_config.skills_dir:
             dirs = gather_asset_dirs(config.skills)
             if dirs:
-                _deploy_assets(dirs, tool_config.skills_dir, tool_name, "skill", dry_run)
+                _deploy_assets(dirs, tool_config.skills_dir, tool_name, "skill", dry_run, assume_yes)
             else:
                 print(f"[{tool_name}] No skill directories found to deploy")
 
@@ -350,12 +353,18 @@ def deploy(
         if "subagents" in type_filter and tool_config.subagents_dir:
             dirs = gather_asset_dirs(config.subagents)
             if dirs:
-                _deploy_assets(dirs, tool_config.subagents_dir, tool_name, "subagent", dry_run)
+                _deploy_assets(dirs, tool_config.subagents_dir, tool_name, "subagent", dry_run, assume_yes)
             else:
                 print(f"[{tool_name}] No subagent directories found to deploy")
 
 
-def _deploy_context(content: str, tool_name: str, tool_config: ToolConfig, dry_run: bool) -> None:
+def _deploy_context(
+    content: str,
+    tool_name: str,
+    tool_config: ToolConfig,
+    dry_run: bool,
+    assume_yes: bool = False,
+) -> None:
     """Write concatenated context content to a tool's target file.
 
     Writes the pre-concatenated markdown string to the tool's context file
@@ -369,6 +378,8 @@ def _deploy_context(content: str, tool_name: str, tool_config: ToolConfig, dry_r
         tool_config: The tool's deployment config, providing ``context_dir``
             and ``context_filename``.
         dry_run: If True, show what would happen but don't write anything.
+        assume_yes: If True, skip the overwrite confirmation prompt and
+            overwrite automatically.
     """
     target = tool_config.context_dir / tool_config.context_filename
 
@@ -384,7 +395,7 @@ def _deploy_context(content: str, tool_name: str, tool_config: ToolConfig, dry_r
             return
         print(f"[{tool_name}] Context diff for {target}:")
         print(diff)
-        if not dry_run:
+        if not dry_run and not assume_yes:
             answer = input(f"[{tool_name}] Overwrite {target}? [Y/n] ").strip().lower()
             if answer and answer != "y":
                 print(f"[{tool_name}] Skipping context deployment")
@@ -403,6 +414,7 @@ def _deploy_assets(
     tool_name: str,
     asset_type: str,
     dry_run: bool,
+    assume_yes: bool = False,
 ) -> None:
     """Symlink skill or subagent source directories into a tool's target location.
 
@@ -428,6 +440,8 @@ def _deploy_assets(
         tool_name: Display name for log messages, e.g. "gemini".
         asset_type: "skill" or "subagent" — used in log messages.
         dry_run: If True, show what would happen but don't write anything.
+        assume_yes: If True, skip the replace confirmation prompt and
+            replace the destination automatically.
     """
     for src_dir in dirs:
         # Skip if source directory has no real content
@@ -472,7 +486,7 @@ def _deploy_assets(
                     f"[{tool_name}] {asset_type} {src_dir.name}: existing file "
                     f"will be replaced by symlink -> {link_target}"
                 )
-            if not dry_run:
+            if not dry_run and not assume_yes:
                 answer = input(f"[{tool_name}] Replace {dest} with symlink? [Y/n] ").strip().lower()
                 if answer and answer != "y":
                     print(f"[{tool_name}] Skipping {asset_type} {src_dir.name}")

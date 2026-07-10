@@ -409,6 +409,17 @@ def test_deploy_context_overwrite_rejected(tmp_path: Path, monkeypatch):
     assert target.read_text() == "old"
 
 
+def test_deploy_context_overwrite_assume_yes_skips_prompt(tmp_path: Path, monkeypatch):
+    ctx_dir = tmp_path / "ctx"
+    ctx_dir.mkdir()
+    target = ctx_dir / "out.md"
+    target.write_text("old")
+    _forbid_input(monkeypatch)
+    tc = ToolConfig(context_dir=ctx_dir, context_filename="out.md")
+    _deploy_context("new", "test", tc, dry_run=False, assume_yes=True)
+    assert target.read_text() == "new"
+
+
 def test_deploy_context_no_changes(tmp_path: Path, capsys):
     ctx_dir = tmp_path / "ctx"
     ctx_dir.mkdir()
@@ -615,6 +626,21 @@ def test_deploy_assets_replaces_legacy_copy(tmp_path: Path, monkeypatch, capsys)
     out = capsys.readouterr().out
     assert "will be replaced by symlink" in out
     assert "stale copy" in out  # the _diff_tree output shows what differed
+
+
+def test_deploy_assets_replaces_legacy_copy_assume_yes_skips_prompt(tmp_path: Path, monkeypatch):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("new content\n")
+    target_dir = tmp_path / "target" / "skills"
+    dest = target_dir / "my-skill"
+    dest.mkdir(parents=True)
+    (dest / "SKILL.md").write_text("stale copy\n")
+    _forbid_input(monkeypatch)
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False, assume_yes=True)
+    assert dest.is_symlink()
+    assert dest.resolve() == src.resolve()
+    assert (dest / "SKILL.md").read_text() == "new content\n"
 
 
 def test_deploy_assets_repoints_wrong_link(tmp_path: Path, monkeypatch):
