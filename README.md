@@ -51,7 +51,7 @@ tools:
   claude:
     context_dir: "~/.claude/"          # combined context becomes ~/.claude/CLAUDE.md
     context_filename: "CLAUDE.md"
-    skills_dir: "~/.claude/skills/"    # each skill is copied here as its own directory
+    skills_dir: "~/.claude/skills/"    # each skill is symlinked here under its own name
   gemini:
     context_dir: "~/.gemini/"          # same content, Gemini's conventions
     context_filename: "GEMINI.md"
@@ -64,12 +64,13 @@ Run `mmm deploy --config mmm.yaml`, and:
   single context file per tool: `~/.claude/CLAUDE.md` and `~/.gemini/GEMINI.md`.
   Each section is prefixed with a `<!-- Source: ... -->` comment so you can
   always tell which repo a rule came from.
-- Skills are gathered from both repos and each is copied as its own directory
+- Skills are gathered from both repos and each is symlinked as its own entry
   into every tool's skills location, so `code-review/` and `deploy-runbook/`
   end up side by side in `~/.claude/skills/` and `~/.gemini/skills/`.
 
 No copy-pasting between tool directories, and no wondering which copy is
-current — edit the source repos and redeploy.
+current — the deployed skills are symlinks, so edits to the source repos
+are live in every tool immediately.
 
 ## Problems it solves
 
@@ -173,13 +174,28 @@ mmm deploy --config mmm.yaml
 mmm status --config mmm.yaml
 ```
 
-The tool checks that each tool's base directory (e.g., `~/.gemini/`, `~/.codex/`, `~/.claude/`, `~/.codeium/windsurf/`) exists before copying. Tools not installed on your machine are skipped automatically.
+The tool checks that each tool's base directory (e.g., `~/.gemini/`, `~/.codex/`, `~/.claude/`, `~/.codeium/windsurf/`) exists before linking. Tools not installed on your machine are skipped automatically.
 
 `--config` is required for `deploy` and `status`. Relative config paths resolve from your current working directory. The CLI does not auto-discover `mmm.yaml`.
 
 ### 5. Update after changes
 
-Edit your source files, then re-run `mmm deploy`. It will ask before overwriting existing files.
+Skills and subagents are deployed as symlinks, so edits to your source files
+are live in every tool immediately — no redeploy needed. Re-run `mmm deploy`
+only when:
+
+- you add or remove a skill/subagent (new sources get linked; removed
+  sources leave stale links behind — see `mmm status`, which flags them
+  as `(BROKEN)`), or
+- you change context sources — context files are real merged files, so
+  they only update on deploy. `mmm` asks before overwriting them.
+
+**Migrating from copies:** versions of `mmm` before symlink deployment
+copied skills and subagents into the tool directories. On your first
+deploy after upgrading, `mmm` detects those legacy copies, shows how they
+differ from your sources, and asks before replacing each one with a
+symlink. `mmm status` flags any remaining legacy copies with
+`(directory, not a symlink — legacy copy?)`.
 
 ## Key files
 
@@ -253,12 +269,14 @@ In the merged output, each file's content is prefixed with a
 `<!-- Source: /path/to/file.md -->` comment so you can always trace a rule
 back to the file it came from.
 
-### `skills` and `subagents` — directories copied whole
+### `skills` and `subagents` — directories symlinked whole
 
 Skills and subagents are not merged — each one is a directory (containing a
-`SKILL.md` and any supporting files) that gets copied wholesale into every
-tool's skills/subagents location, keeping its own name. The two sections
-behave identically; they only differ in which target directory they deploy to.
+`SKILL.md` and any supporting files) that gets symlinked into every tool's
+skills/subagents location, keeping its own name. Because the deployed entry
+is a symlink back to your source, edits to the source are live in every tool
+without redeploying. The two sections behave identically; they only differ
+in which target directory they deploy to.
 
 ```yaml
 skills:
@@ -285,8 +303,8 @@ subagents:
   `experimental-parser/`.
 
 If two sources contain a skill with the same directory name, they collide at
-the destination: the later one asks to overwrite the earlier one. Rename one
-of them if you want both deployed.
+the destination: the later one asks to repoint the earlier one's symlink.
+Rename one of them if you want both deployed.
 
 ### `tools` — where each tool wants its files
 
@@ -299,7 +317,7 @@ The four keys inside it are what matter:
 |---|---|---|
 | `context_dir` | Directory the merged context file is written into | No context deployed to this tool |
 | `context_filename` | Name of that merged file (e.g. `CLAUDE.md`) | No context deployed (both keys are required for context) |
-| `skills_dir` | Directory each skill is copied into, as its own subdirectory | No skills deployed to this tool |
+| `skills_dir` | Directory each skill is symlinked into, under its own name | No skills deployed to this tool |
 | `subagents_dir` | Same as `skills_dir`, but for subagents | No subagents deployed to this tool |
 
 Only include the keys a tool actually supports. This is how you express
@@ -338,20 +356,24 @@ Safety behavior you get on every run, with no extra configuration:
 - **Tools you don't have are skipped.** Before deploying to a tool, `mmm`
   checks that its target directory (or that directory's parent) exists. No
   `~/.gemini/`? Gemini is skipped with a note, not an error.
-- **Nothing is overwritten silently.** If a target file already exists and
+- **Nothing is overwritten silently.** If a context file already exists and
   differs, `mmm` shows a unified diff of exactly what would change and asks
-  `Overwrite? [Y/n]` — per file, per skill. If nothing changed, it says so
-  and moves on.
+  `Overwrite? [Y/n]`. If a skill destination is anything other than the
+  correct symlink — a legacy copied directory, a symlink pointing elsewhere,
+  a broken symlink, or a plain file — `mmm` describes what's there (with a
+  content diff for legacy copies) and asks `Replace? [Y/n]` per skill. If
+  nothing changed, it says so and moves on.
 - **`--dry-run` never writes.** It prints what would happen and exits.
   `mmm diff` does the same job in read-only form.
 - **Empty skills are skipped.** A skill or subagent whose files are all
   empty is not deployed. (Empty context files are currently still included
   in the merged output — each contributes just its `<!-- Source: ... -->`
   header line.)
-- **Deployed skills are replaced wholesale.** When you confirm a skill
-  overwrite, the destination directory is deleted and re-copied. Treat
-  deployed copies as disposable: make edits in your source repos, never in
-  the tool directories, or the next deploy will discard them.
+- **Deployed skills are symlinks into your sources.** The tool directories
+  hold links, not copies, so a second deploy with nothing changed is a
+  no-op — already-linked skills report "no changes" without prompting.
+  Be aware the link works both ways: editing a file under a tool's skills
+  directory edits your source repo.
 
 ## Dependencies
 

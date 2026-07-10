@@ -8,12 +8,14 @@ import pytest
 from mmm.config import AssetSources, Config, ToolConfig
 from mmm.deployer import (
     _check_tool_base_dir,
+    _classify_dest,
     _deploy_assets,
     _deploy_context,
     _diff_tree,
     _format_file_diff,
     _has_md_files,
     _is_excluded,
+    _remove_dest,
     concatenate_files,
     deploy,
     gather_asset_dirs,
@@ -21,6 +23,14 @@ from mmm.deployer import (
     show_diff,
     show_status,
 )
+
+
+def _forbid_input(monkeypatch):
+    """Make any input() call fail the test — for paths that must not prompt."""
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _: pytest.fail("input() should not be called"),
+    )
 
 
 # ============================================================
@@ -299,6 +309,20 @@ def test_diff_tree_nested(tmp_path: Path):
     assert "nested" in result
 
 
+def test_diff_tree_dest_only_file_shown_as_removed(tmp_path: Path):
+    src = tmp_path / "src"
+    dest = tmp_path / "dest"
+    src.mkdir()
+    dest.mkdir()
+    (src / "a.md").write_text("same\n")
+    (dest / "a.md").write_text("same\n")
+    (dest / "local-notes.md").write_text("only in dest\n")
+    result = _diff_tree(src, dest)
+    assert "will be removed" in result
+    assert "local-notes.md" in result
+    assert "only in dest" in result
+
+
 # ============================================================
 # _check_tool_base_dir
 # ============================================================
@@ -397,20 +421,126 @@ def test_deploy_context_no_changes(tmp_path: Path, capsys):
 
 
 # ============================================================
+# _classify_dest
+# ============================================================
+
+
+def test_classify_dest_missing(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+    assert _classify_dest(src, tmp_path / "nothing-here") == "missing"
+
+
+def test_classify_dest_linked(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+    dest = tmp_path / "dest"
+    dest.symlink_to(src.resolve(), target_is_directory=True)
+    assert _classify_dest(src, dest) == "linked"
+
+
+def test_classify_dest_wrong_link(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+    other = tmp_path / "other"
+    other.mkdir()
+    dest = tmp_path / "dest"
+    dest.symlink_to(other.resolve(), target_is_directory=True)
+    assert _classify_dest(src, dest) == "wrong-link"
+
+
+def test_classify_dest_broken_link(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+    dest = tmp_path / "dest"
+    dest.symlink_to(tmp_path / "gone", target_is_directory=True)
+    assert _classify_dest(src, dest) == "broken-link"
+
+
+def test_classify_dest_copy(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+    dest = tmp_path / "dest"
+    dest.mkdir()
+    assert _classify_dest(src, dest) == "copy"
+
+
+def test_classify_dest_file(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+    dest = tmp_path / "dest"
+    dest.write_text("a plain file")
+    assert _classify_dest(src, dest) == "file"
+
+
+def test_classify_dest_self_same_dir(tmp_path: Path):
+    src = tmp_path / "src"
+    src.mkdir()
+    assert _classify_dest(src, src) == "self"
+
+
+def test_classify_dest_self_via_symlinked_parent(tmp_path: Path):
+    # e.g. the user made ~/.claude/skills a symlink to their source repo:
+    # dest is a real dir reached through the symlinked parent.
+    parent = tmp_path / "sources"
+    src = parent / "my-skill"
+    src.mkdir(parents=True)
+    linked_parent = tmp_path / "target-skills"
+    linked_parent.symlink_to(parent, target_is_directory=True)
+    dest = linked_parent / "my-skill"
+    assert not dest.is_symlink()
+    assert _classify_dest(src, dest) == "self"
+
+
+# ============================================================
+# _remove_dest
+# ============================================================
+
+
+def test_remove_dest_symlink_leaves_target_intact(tmp_path: Path):
+    target = tmp_path / "real-dir"
+    target.mkdir()
+    (target / "SKILL.md").write_text("precious")
+    link = tmp_path / "link"
+    link.symlink_to(target, target_is_directory=True)
+    _remove_dest(link)
+    assert not link.is_symlink()
+    assert (target / "SKILL.md").read_text() == "precious"
+
+
+def test_remove_dest_file(tmp_path: Path):
+    f = tmp_path / "plain"
+    f.write_text("bye")
+    _remove_dest(f)
+    assert not f.exists()
+
+
+def test_remove_dest_real_dir(tmp_path: Path):
+    d = tmp_path / "dir"
+    d.mkdir()
+    (d / "a.md").write_text("bye")
+    _remove_dest(d)
+    assert not d.exists()
+
+
+# ============================================================
 # _deploy_assets
 # ============================================================
 
 
-def test_deploy_assets_copies_tree(tmp_path: Path, monkeypatch):
+def test_deploy_assets_creates_symlink(tmp_path: Path, monkeypatch):
     src = tmp_path / "src" / "my-skill"
     src.mkdir(parents=True)
     (src / "SKILL.md").write_text("skill content")
     target_dir = tmp_path / "target" / "skills"
     target_dir.mkdir(parents=True)
-    monkeypatch.setattr("builtins.input", lambda _: "y")
+    _forbid_input(monkeypatch)
     _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
-    assert (target_dir / "my-skill" / "SKILL.md").exists()
-    assert (target_dir / "my-skill" / "SKILL.md").read_text() == "skill content"
+    dest = target_dir / "my-skill"
+    assert dest.is_symlink()
+    assert dest.resolve() == src.resolve()
+    assert dest.readlink().is_absolute()
+    assert (dest / "SKILL.md").read_text() == "skill content"
 
 
 def test_deploy_assets_skips_empty_source(tmp_path: Path, capsys):
@@ -425,7 +555,7 @@ def test_deploy_assets_skips_empty_source(tmp_path: Path, capsys):
     assert "empty" in out.lower()
 
 
-def test_deploy_assets_overwrite_rejected(tmp_path: Path, monkeypatch):
+def test_deploy_assets_replace_rejected(tmp_path: Path, monkeypatch):
     src = tmp_path / "src" / "my-skill"
     src.mkdir(parents=True)
     (src / "SKILL.md").write_text("new")
@@ -435,32 +565,299 @@ def test_deploy_assets_overwrite_rejected(tmp_path: Path, monkeypatch):
     (dest / "SKILL.md").write_text("old")
     monkeypatch.setattr("builtins.input", lambda _: "n")
     _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    assert not dest.is_symlink()
     assert (dest / "SKILL.md").read_text() == "old"
 
 
-def test_deploy_assets_no_changes(tmp_path: Path, capsys):
+def test_deploy_assets_no_changes(tmp_path: Path, monkeypatch, capsys):
     src = tmp_path / "src" / "my-skill"
     src.mkdir(parents=True)
     (src / "SKILL.md").write_text("same")
     target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
     dest = target_dir / "my-skill"
-    dest.mkdir(parents=True)
-    (dest / "SKILL.md").write_text("same")
+    dest.symlink_to(src.resolve(), target_is_directory=True)
+    _forbid_input(monkeypatch)
     _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
     out = capsys.readouterr().out
     assert "no changes" in out.lower()
 
 
-def test_deploy_assets_dry_run(tmp_path: Path, capsys):
+def test_deploy_assets_idempotent_second_deploy(tmp_path: Path, monkeypatch, capsys):
     src = tmp_path / "src" / "my-skill"
     src.mkdir(parents=True)
     (src / "SKILL.md").write_text("content")
     target_dir = tmp_path / "target" / "skills"
     target_dir.mkdir(parents=True)
+    _forbid_input(monkeypatch)
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    dest = target_dir / "my-skill"
+    assert dest.is_symlink()
+    assert dest.resolve() == src.resolve()
+    out = capsys.readouterr().out
+    assert "no changes" in out.lower()
+
+
+def test_deploy_assets_replaces_legacy_copy(tmp_path: Path, monkeypatch, capsys):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("new content\n")
+    target_dir = tmp_path / "target" / "skills"
+    dest = target_dir / "my-skill"
+    dest.mkdir(parents=True)
+    (dest / "SKILL.md").write_text("stale copy\n")
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    assert dest.is_symlink()
+    assert dest.resolve() == src.resolve()
+    assert (dest / "SKILL.md").read_text() == "new content\n"
+    out = capsys.readouterr().out
+    assert "will be replaced by symlink" in out
+    assert "stale copy" in out  # the _diff_tree output shows what differed
+
+
+def test_deploy_assets_repoints_wrong_link(tmp_path: Path, monkeypatch):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    other = tmp_path / "other-skill"
+    other.mkdir()
+    (other / "SKILL.md").write_text("other")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    dest = target_dir / "my-skill"
+    dest.symlink_to(other.resolve(), target_is_directory=True)
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    assert dest.is_symlink()
+    assert dest.resolve() == src.resolve()
+    # Repointing removes only the link — never the old target's contents
+    assert (other / "SKILL.md").read_text() == "other"
+
+
+def test_deploy_assets_repoint_wrong_link_rejected(tmp_path: Path, monkeypatch):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    other = tmp_path / "other-skill"
+    other.mkdir()
+    (other / "SKILL.md").write_text("other")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    dest = target_dir / "my-skill"
+    dest.symlink_to(other.resolve(), target_is_directory=True)
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    assert dest.is_symlink()
+    assert dest.resolve() == other.resolve()
+
+
+def test_deploy_assets_repairs_broken_link(tmp_path: Path, monkeypatch):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    dest = target_dir / "my-skill"
+    dest.symlink_to(tmp_path / "gone", target_is_directory=True)
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    assert dest.is_symlink()
+    assert dest.resolve() == src.resolve()
+
+
+def test_deploy_assets_replaces_regular_file(tmp_path: Path, monkeypatch, capsys):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    dest = target_dir / "my-skill"
+    dest.write_text("a plain file where a skill should be")
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    assert dest.is_symlink()
+    assert dest.resolve() == src.resolve()
+    out = capsys.readouterr().out
+    assert "existing file" in out
+
+
+def test_deploy_assets_replace_file_rejected(tmp_path: Path, monkeypatch):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    dest = target_dir / "my-skill"
+    dest.write_text("keep me")
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    assert not dest.is_symlink()
+    assert dest.read_text() == "keep me"
+
+
+def test_deploy_assets_repair_broken_link_rejected(tmp_path: Path, monkeypatch):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    dest = target_dir / "my-skill"
+    dest.symlink_to(tmp_path / "gone", target_is_directory=True)
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    assert dest.is_symlink()
+    assert not dest.exists()  # still the original broken link
+
+
+def test_deploy_assets_dest_is_source_untouched(tmp_path: Path, monkeypatch, capsys):
+    # skills_dir configured to point straight at the sources: dest IS src.
+    parent = tmp_path / "skills"
+    src = parent / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("precious")
+    _forbid_input(monkeypatch)
+    _deploy_assets([src], parent, "test", "skill", dry_run=False)
+    assert not src.is_symlink()
+    assert (src / "SKILL.md").read_text() == "precious"
+    out = capsys.readouterr().out
+    assert "source directory itself" in out
+
+
+def test_deploy_assets_dest_is_source_via_symlinked_parent(
+    tmp_path: Path, monkeypatch, capsys
+):
+    # The user symlinked the whole target dir at their source repo before mmm:
+    # dest is a real dir reached through the symlinked parent — still the source.
+    parent = tmp_path / "sources"
+    src = parent / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("precious")
+    target_dir = tmp_path / "target-skills"
+    target_dir.symlink_to(parent, target_is_directory=True)
+    _forbid_input(monkeypatch)
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    assert not src.is_symlink()
+    assert not (target_dir / "my-skill").is_symlink()
+    assert (src / "SKILL.md").read_text() == "precious"
+    out = capsys.readouterr().out
+    assert "source directory itself" in out
+
+
+def test_deploy_assets_legacy_copy_with_dest_only_file(
+    tmp_path: Path, monkeypatch, capsys
+):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("same\n")
+    target_dir = tmp_path / "target" / "skills"
+    dest = target_dir / "my-skill"
+    dest.mkdir(parents=True)
+    (dest / "SKILL.md").write_text("same\n")
+    (dest / "local-notes.md").write_text("only in dest\n")
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=False)
+    out = capsys.readouterr().out
+    # The dest-only file must show up as a removal, not "(contents identical)"
+    assert "will be removed" in out
+    assert "local-notes.md" in out
+    assert "contents identical" not in out
+    assert (dest / "local-notes.md").exists()  # rejected -> untouched
+
+
+def test_deploy_assets_dry_run(tmp_path: Path, monkeypatch, capsys):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    _forbid_input(monkeypatch)
     _deploy_assets([src], target_dir, "test", "skill", dry_run=True)
     assert not (target_dir / "my-skill").exists()
     out = capsys.readouterr().out
-    assert "Copying" in out
+    assert "Linking" in out
+
+
+def test_deploy_assets_dry_run_legacy_copy(tmp_path: Path, monkeypatch, capsys):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("new\n")
+    target_dir = tmp_path / "target" / "skills"
+    dest = target_dir / "my-skill"
+    dest.mkdir(parents=True)
+    (dest / "SKILL.md").write_text("old\n")
+    _forbid_input(monkeypatch)
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=True)
+    assert not dest.is_symlink()
+    assert (dest / "SKILL.md").read_text() == "old\n"
+    out = capsys.readouterr().out
+    assert "will be replaced by symlink" in out
+
+
+def test_deploy_assets_dry_run_wrong_link(tmp_path: Path, monkeypatch, capsys):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    other = tmp_path / "other-skill"
+    other.mkdir()
+    (other / "SKILL.md").write_text("other")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    dest = target_dir / "my-skill"
+    dest.symlink_to(other.resolve(), target_is_directory=True)
+    _forbid_input(monkeypatch)
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=True)
+    assert dest.resolve() == other.resolve()
+    out = capsys.readouterr().out
+    assert "will repoint" in out
+
+
+def test_deploy_assets_dry_run_regular_file(tmp_path: Path, monkeypatch, capsys):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    dest = target_dir / "my-skill"
+    dest.write_text("keep me")
+    _forbid_input(monkeypatch)
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=True)
+    assert not dest.is_symlink()
+    assert dest.read_text() == "keep me"
+    out = capsys.readouterr().out
+    assert "existing file" in out
+
+
+def test_deploy_assets_dry_run_linked(tmp_path: Path, monkeypatch, capsys):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    dest = target_dir / "my-skill"
+    dest.symlink_to(src.resolve(), target_is_directory=True)
+    _forbid_input(monkeypatch)
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=True)
+    assert dest.resolve() == src.resolve()
+    out = capsys.readouterr().out
+    assert "no changes" in out.lower()
+
+
+def test_deploy_assets_dry_run_broken_link(tmp_path: Path, monkeypatch, capsys):
+    src = tmp_path / "src" / "my-skill"
+    src.mkdir(parents=True)
+    (src / "SKILL.md").write_text("content")
+    target_dir = tmp_path / "target" / "skills"
+    target_dir.mkdir(parents=True)
+    dest = target_dir / "my-skill"
+    dest.symlink_to(tmp_path / "gone", target_is_directory=True)
+    _forbid_input(monkeypatch)
+    _deploy_assets([src], target_dir, "test", "skill", dry_run=True)
+    assert dest.is_symlink()
+    assert not dest.exists()  # still broken — dry run changed nothing
+    out = capsys.readouterr().out
+    assert "broken symlink" in out
 
 
 # ============================================================
@@ -552,6 +949,68 @@ def test_show_diff_tools_filter(minimal_config: Config, capsys):
     assert "tool-a" not in out
 
 
+def test_show_diff_new_asset_reports_symlink(minimal_config: Config, capsys):
+    show_diff(minimal_config, None, {"skills"})
+    out = capsys.readouterr().out
+    assert "will create symlink" in out
+
+
+def test_show_diff_legacy_copy(minimal_config: Config, capsys):
+    tc = minimal_config.tools["tool-a"]
+    dest = tc.skills_dir / "code-review"
+    dest.mkdir()
+    (dest / "SKILL.md").write_text("stale copy\n")
+    show_diff(minimal_config, None, {"skills"})
+    out = capsys.readouterr().out
+    assert "legacy copy" in out
+    assert "will be replaced by symlink" in out
+    assert "stale copy" in out  # content diff of the stale copy is shown
+
+
+def test_show_diff_correct_symlink_no_changes(minimal_config: Config, monkeypatch, capsys):
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    deploy(minimal_config, None, {"skills"}, dry_run=False)
+    show_diff(minimal_config, None, {"skills"})
+    out = capsys.readouterr().out
+    assert "no changes" in out.lower()
+
+
+def test_show_diff_broken_symlink_no_crash(minimal_config: Config, tmp_path: Path, capsys):
+    tc = minimal_config.tools["tool-a"]
+    dest = tc.skills_dir / "code-review"
+    dest.symlink_to(tmp_path / "gone", target_is_directory=True)
+    show_diff(minimal_config, None, {"skills"})
+    out = capsys.readouterr().out
+    assert "(broken)" in out
+    assert "will repoint" in out
+
+
+def test_show_diff_dest_is_source(mock_source_tree, capsys):
+    # skills_dir pointing straight at the sources: report, don't propose replace
+    config = Config(
+        skills=AssetSources(sources=[mock_source_tree["skills_dir"]]),
+        tools={
+            "tool-a": ToolConfig(skills_dir=mock_source_tree["skills_dir"]),
+        },
+    )
+    show_diff(config, None, {"skills"})
+    out = capsys.readouterr().out
+    assert "source directory itself" in out
+    assert "will be replaced" not in out
+
+
+def test_show_diff_legacy_copy_dest_only_file(minimal_config: Config, capsys):
+    tc = minimal_config.tools["tool-a"]
+    dest = tc.skills_dir / "code-review"
+    dest.mkdir()
+    (dest / "SKILL.md").write_text("# Code Review\nReview code carefully.\n")
+    (dest / "local-notes.md").write_text("only in dest\n")
+    show_diff(minimal_config, None, {"skills"})
+    out = capsys.readouterr().out
+    assert "will be removed" in out
+    assert "local-notes.md" in out
+
+
 # ============================================================
 # show_status
 # ============================================================
@@ -584,3 +1043,45 @@ def test_show_status_base_dir_missing(capsys):
     show_status(config)
     out = capsys.readouterr().out
     assert "not found" in out.lower()
+
+
+def test_show_status_symlink_shows_target(minimal_config: Config, monkeypatch, capsys):
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    deploy(minimal_config, None, {"skills"}, dry_run=False)
+    capsys.readouterr()  # discard deploy output — assert on show_status alone
+    show_status(minimal_config)
+    out = capsys.readouterr().out
+    assert "Skills (" in out
+    assert "code-review ->" in out
+    assert "BROKEN" not in out
+
+
+def test_show_status_broken_symlink(minimal_config: Config, tmp_path: Path, capsys):
+    tc = minimal_config.tools["tool-a"]
+    dest = tc.skills_dir / "code-review"
+    dest.symlink_to(tmp_path / "gone", target_is_directory=True)
+    show_status(minimal_config)
+    out = capsys.readouterr().out
+    assert "code-review ->" in out
+    assert "BROKEN" in out
+
+
+def test_show_status_legacy_copy_flagged(minimal_config: Config, capsys):
+    tc = minimal_config.tools["tool-a"]
+    dest = tc.skills_dir / "code-review"
+    dest.mkdir()
+    (dest / "SKILL.md").write_text("stale copy\n")
+    show_status(minimal_config)
+    out = capsys.readouterr().out
+    assert "not a symlink" in out
+
+
+def test_show_status_stray_file_listed(minimal_config: Config, capsys):
+    tc = minimal_config.tools["tool-a"]
+    (tc.skills_dir / "stray-notes.md").write_text("not a skill\n")
+    (tc.skills_dir / ".gitkeep").write_text("")
+    show_status(minimal_config)
+    out = capsys.readouterr().out
+    assert "stray-notes.md (file, not a symlink)" in out
+    assert ".gitkeep" not in out  # hidden files stay hidden
+    assert "(empty)" not in out.split("Subagents")[0]  # skills block isn't "(empty)"
