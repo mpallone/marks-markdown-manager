@@ -159,6 +159,9 @@ mmm deploy --config /path/to/dir/mmm.yaml --dry-run
 # Deploy for real
 mmm deploy --config /path/to/dir/mmm.yaml
 
+# Deploy without stopping to confirm each overwrite/replace prompt
+mmm deploy --config /path/to/dir/mmm.yaml --yes
+
 # Deploy only skills to a specific tool
 mmm deploy --config /path/to/dir/mmm.yaml --type skills --tools claude
 
@@ -362,7 +365,9 @@ Safety behavior you get on every run, with no extra configuration:
   correct symlink — a legacy copied directory, a symlink pointing elsewhere,
   a broken symlink, or a plain file — `mmm` describes what's there (with a
   content diff for legacy copies) and asks `Replace? [Y/n]` per skill. If
-  nothing changed, it says so and moves on.
+  nothing changed, it says so and moves on. Pass `--yes` (or `-y`) to
+  `mmm deploy` to skip these confirmations and overwrite/replace
+  automatically — the diff is still printed first, so you see what changed.
 - **`--dry-run` never writes.** It prints what would happen and exits.
   `mmm diff` does the same job in read-only form.
 - **Empty skills are skipped.** A skill or subagent whose files are all

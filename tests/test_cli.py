@@ -14,11 +14,12 @@ from mmm.cli import build_parser, main
 def test_parser_deploy_full_args():
     parser = build_parser()
     args = parser.parse_args(
-        ["deploy", "--config", "f.yaml", "--dry-run", "--type", "skills", "--tools", "claude,gemini"]
+        ["deploy", "--config", "f.yaml", "--dry-run", "--yes", "--type", "skills", "--tools", "claude,gemini"]
     )
     assert args.command == "deploy"
     assert args.config == "f.yaml"
     assert args.dry_run is True
+    assert args.yes is True
     assert args.type == "skills"
     assert args.tools == "claude,gemini"
 
@@ -28,8 +29,15 @@ def test_parser_deploy_minimal():
     args = parser.parse_args(["deploy", "--config", "f.yaml"])
     assert args.command == "deploy"
     assert args.dry_run is False
+    assert args.yes is False
     assert args.type is None
     assert args.tools is None
+
+
+def test_parser_deploy_yes_short_alias():
+    parser = build_parser()
+    args = parser.parse_args(["deploy", "--config", "f.yaml", "-y"])
+    assert args.yes is True
 
 
 def test_parser_diff_args():
@@ -80,6 +88,15 @@ def test_main_deploy_dispatches(config_yaml: Path, monkeypatch):
     mock_deploy.assert_called_once()
     call_kwargs = mock_deploy.call_args
     assert call_kwargs[1]["dry_run"] is False
+    assert call_kwargs[1]["assume_yes"] is False
+
+
+def test_main_deploy_yes_flag_forwarded(config_yaml: Path, monkeypatch):
+    mock_deploy = MagicMock()
+    monkeypatch.setattr("mmm.cli.deploy", mock_deploy)
+    main(["deploy", "--config", str(config_yaml), "--yes"])
+    call_kwargs = mock_deploy.call_args
+    assert call_kwargs[1]["assume_yes"] is True
 
 
 def test_main_diff_dispatches(config_yaml: Path, monkeypatch):

@@ -29,6 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     Example usages the parser supports::
 
         mmm deploy --config mmm.yaml
+        mmm deploy --config mmm.yaml --yes
         mmm deploy --config mmm.yaml --dry-run --type skills --tools gemini,claude
         mmm diff --config mmm.yaml --type context
         mmm status --config mmm.yaml
@@ -46,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     dp = sub.add_parser("deploy", help="Deploy context (written) and skills/subagents (symlinked) to AI tools")
     dp.add_argument("--config", required=True, help="Path to mmm.yaml config file")
     dp.add_argument("--dry-run", action="store_true", help="Print what would be written or linked without changing anything")
+    dp.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompts and overwrite/replace automatically")
     dp.add_argument("--type", choices=["context", "skills", "subagents"], help="Deploy only this asset type")
     dp.add_argument("--tools", help="Comma-separated list of tools to deploy to (e.g. gemini,claude)")
 
@@ -72,6 +74,9 @@ def main(argv: list[str] | None = None) -> None:
     - ``--type``: A single asset type (``context``, ``skills``, or ``subagents``)
       to operate on. Defaults to all three.
 
+    ``deploy`` also accepts ``--yes``/``-y`` to skip the interactive overwrite
+    and replace confirmation prompts and proceed automatically.
+
     Args:
         argv: Command-line arguments to parse. Defaults to sys.argv if None.
             Primarily exists so tests can call ``main(["deploy", "--config", ...])``
@@ -96,7 +101,7 @@ def main(argv: list[str] | None = None) -> None:
         if type_filter:
             selected_types = {type_filter}
 
-        deploy(config, tools_filter=tools_filter, type_filter=selected_types, dry_run=args.dry_run)
+        deploy(config, tools_filter=tools_filter, type_filter=selected_types, dry_run=args.dry_run, assume_yes=args.yes)
 
     elif args.command == "diff":
         selected_types = {"context", "skills", "subagents"}
